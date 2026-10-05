@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS export_request (
   finished_at      timestamptz,
   updated_at       timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE export_request ADD COLUMN IF NOT EXISTS scheduled_start_at timestamptz;  -- início agendado (NULL = imediato)
 CREATE INDEX IF NOT EXISTS export_request_status_idx ON export_request (status, submitted_at);
 
 CREATE TABLE IF NOT EXISTS export_request_table (

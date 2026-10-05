@@ -5,7 +5,8 @@
   {% for r in (requests if requests is defined else active) %}
     <tr>
       <td><a href="{{ url_for('request_detail', request_id=r.request_id) }}"><b>{{ r.request_name }}</b></a></td>
-      <td>{{ badge(r.status) }}{% if r.status_reason %}<br><small class="muted">{{ r.status_reason }}</small>{% endif %}</td>
+      <td>{% if r.status == 'SUBMITTED' and r.scheduled_start_at and r.scheduled_start_at > now_utc %}{{ badge('SCHEDULED') }}<br><small class="muted">{{ r.scheduled_start_at|dt }}</small>
+        {% else %}{{ badge(r.status) }}{% endif %}{% if r.status_reason %}<br><small class="muted">{{ r.status_reason }}</small>{% endif %}</td>
       <td><small>{{ r.tables }}</small></td>
       <td style="min-width:180px">{{ progress(r.done or 0, r.total or 0, (r.failed or 0) + (r.unknown or 0), r.running or 0) }}</td>
       <td>{{ r.max_parallel }}</td>

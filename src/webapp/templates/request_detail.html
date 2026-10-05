@@ -29,6 +29,8 @@
   <div class="card">
     <dl class="kv">
       <dt>Status</dt><dd>{{ badge(req.status) }} {% if req.status_reason %}<small class="muted">{{ req.status_reason }}</small>{% endif %}</dd>
+      {% if req.scheduled_start_at %}<dt>Início agendado</dt><dd>{{ req.scheduled_start_at|dt }}
+        {% if req.status == 'SUBMITTED' and req.scheduled_start_at > now_utc %}<span class="badge s-scheduled">Agendado</span>{% endif %}</dd>{% endif %}
       <dt>Início</dt><dd>{{ req.started_at|dt }}</dd>
       <dt>Fim</dt><dd>{{ req.finished_at|dt }}</dd>
       <dt>Duração</dt><dd>{{ req.started_at|dur(req.finished_at) }}</dd>
@@ -46,6 +48,23 @@
     <p class="hint">Pode ser alterado com o pedido em execução. Também valem o limite por tabela e o limite global da origem.</p>
   </div>
 </div>
+
+{% if req.status == 'SUBMITTED' and not req.started_at %}
+<div class="card">
+  <h2>🗓️ Agendamento</h2>
+  {% if req.scheduled_start_at and req.scheduled_start_at > now_utc %}
+  <p style="margin-top:0">Execução agendada para <b>{{ req.scheduled_start_at|dt }}</b> ({{ APP_TZ_NAME }}). Nenhuma chamada à procedure será feita antes disso.</p>
+  {% else %}<p style="margin-top:0" class="muted">Sem agendamento: o pedido executa assim que o dispatcher tiver capacidade.</p>{% endif %}
+  <div class="actions">
+    <form method="post" action="{{ url_for('request_schedule', request_id=req.request_id) }}" class="inline">
+      <input type="datetime-local" name="scheduled_start_at" value="{{ req.scheduled_start_at|dtlocal }}">
+      <button class="btn ghost" name="action" value="set">{{ 'Alterar agendamento' if req.scheduled_start_at else 'Agendar' }}</button></form>
+    {% if req.scheduled_start_at and req.scheduled_start_at > now_utc %}
+    <form method="post" action="{{ url_for('request_schedule', request_id=req.request_id) }}"><button class="btn" name="action" value="now">Iniciar agora</button></form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
 
 {% if totals.failed %}
 <div class="card conflict">

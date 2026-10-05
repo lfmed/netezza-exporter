@@ -125,3 +125,4 @@ details summary { cursor: pointer; color: var(--teal-d); margin: 8px 0; font-wei
 .grid.form-grid input, .grid.form-grid select { padding: 6px 8px; font-size: 13px; max-width: 100%; }
 .grid.form-grid input[name=display_name], .grid.form-grid input[name=description] { width: 11em; }
 .grid.form-grid input[name=secret_scope] { width: 8em !important; }
+.s-scheduled { background: #e7e0f7; color: #5b3d8a; }

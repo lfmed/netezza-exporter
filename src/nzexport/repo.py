@@ -213,7 +213,9 @@ def review(db: Database, tables: list[TableRequest]) -> list[TableRequest]:
 
 
 def create_request(db: Database, actor: str, name: str, max_parallel: int, deadline_at, notes: str | None,
-                   tables: list[TableRequest]) -> str:
+                   tables: list[TableRequest], scheduled_start_at=None) -> str:
+    if scheduled_start_at and deadline_at and deadline_at <= scheduled_start_at:
+        raise ValueError("o prazo/janela precisa ser depois do início agendado")
     for attempt in range(2):
         tables = review(db, tables)
         conflicts = [c | {"table_config_id": t.table_config_id} for t in tables for c in t.conflicts]
@@ -222,7 +224,7 @@ def create_request(db: Database, actor: str, name: str, max_parallel: int, deadl
         if not any(t.blocks for t in tables):
             raise NothingToRun("todos os períodos solicitados já foram executados ou estão em execução")
         try:
-            return _insert_request(db, actor, name, max_parallel, deadline_at, notes, tables)
+            return _insert_request(db, actor, name, max_parallel, deadline_at, notes, tables, scheduled_start_at)
         except psycopg.errors.ExclusionViolation:
             # outro pedido gravou um período entre a revisão e o insert: revisa de novo uma vez
             if attempt:
@@ -230,12 +232,14 @@ def create_request(db: Database, actor: str, name: str, max_parallel: int, deadl
     raise AssertionError("inalcançável")
 
 
-def _insert_request(db, actor, name, max_parallel, deadline_at, notes, tables: list[TableRequest]) -> str:
+def _insert_request(db, actor, name, max_parallel, deadline_at, notes, tables: list[TableRequest],
+                    scheduled_start_at=None) -> str:
     with db.tx() as conn:
         req = conn.execute("""
-            INSERT INTO export_request (request_name, requested_by, status, max_parallel, deadline_at, notes)
-            VALUES (%s,%s,'SUBMITTED',%s,%s,%s) RETURNING request_id""",
-            (name, actor, max_parallel, deadline_at, notes)).fetchone()
+            INSERT INTO export_request (request_name, requested_by, status, max_parallel, deadline_at, notes,
+                                        scheduled_start_at)
+            VALUES (%s,%s,'SUBMITTED',%s,%s,%s,%s) RETURNING request_id""",
+            (name, actor, max_parallel, deadline_at, notes, scheduled_start_at)).fetchone()
         rid = req["request_id"]
         ordinal = 0
         for t in tables:
@@ -267,7 +271,8 @@ def _insert_request(db, actor, name, max_parallel, deadline_at, notes, tables: l
                   {"tables": [t.table_config_id for t in tables if t.blocks],
                    "skipped_tables": [t.table_config_id for t in tables if not t.blocks],
                    "subblocks": sum(len(t.blocks) for t in tables),
-                   "excluded_days": sum(t.excluded_days for t in tables), "max_parallel": max_parallel})
+                   "excluded_days": sum(t.excluded_days for t in tables), "max_parallel": max_parallel,
+                   "scheduled_start_at": scheduled_start_at})
         return str(rid)
 
 
@@ -362,6 +367,20 @@ def cancel_request(db: Database, request_id: str, actor: str, reason: str | None
         n = conn.execute("""UPDATE export_subblock SET status = 'CANCELED', updated_at = now()
                             WHERE request_id = %s AND status IN ('PENDING','FAILED')""", (request_id,)).rowcount
         log_event(conn, request_id, "SUBBLOCKS_CANCELED", actor, {"count": n})
+
+
+def reschedule_request(db: Database, request_id: str, actor: str, when):
+    """Altera (ou remove, com when=None) o início agendado de um pedido que ainda não começou."""
+    with db.tx() as conn:
+        row = conn.execute("""
+            UPDATE export_request r SET scheduled_start_at = %s, updated_at = now()
+            FROM (SELECT scheduled_start_at FROM export_request WHERE request_id = %s) o
+            WHERE r.request_id = %s AND r.status = 'SUBMITTED' AND r.started_at IS NULL
+              AND (r.deadline_at IS NULL OR %s::timestamptz IS NULL OR r.deadline_at > %s::timestamptz)
+            RETURNING o.scheduled_start_at AS old""", (when, request_id, request_id, when, when)).fetchone()
+        if row is None:
+            raise StateError("só é possível agendar pedidos que ainda não começaram, com início antes do prazo")
+        log_event(conn, request_id, "REQUEST_RESCHEDULED", actor, {"from": row["old"], "to": when})
 
 
 def set_parallelism(db: Database, request_id: str, actor: str, max_parallel: int):
@@ -496,6 +515,14 @@ def recent_dispatcher_runs(db: Database, limit: int = 10):
     return db.query("SELECT * FROM dispatcher_run ORDER BY started_at DESC LIMIT %s", (limit,))
 
 
-def work_pending(db: Database) -> bool:
-    return db.one("""SELECT EXISTS (SELECT 1 FROM export_subblock s JOIN export_request r USING (request_id)
-                     WHERE s.status = 'PENDING' AND r.status IN ('SUBMITTED','RUNNING')) AS x""")["x"]
+# Condição de subbloco pronto para executar agora (usada pelo dispatcher e pelo agendador do app)
+DUE_NOW_SQL = """s.status = 'PENDING' AND (s.next_attempt_at IS NULL OR s.next_attempt_at <= now())
+                  AND r.status IN ('SUBMITTED', 'RUNNING')
+                  AND (r.scheduled_start_at IS NULL OR r.scheduled_start_at <= now())
+                  AND (r.deadline_at IS NULL OR r.deadline_at > now())"""
+
+
+def work_due(conn) -> bool:
+    return conn.execute(f"""SELECT EXISTS (SELECT 1 FROM export_subblock s JOIN export_request r USING (request_id)
+                            JOIN table_config tc ON tc.table_config_id = s.table_config_id
+                            WHERE {DUE_NOW_SQL} AND tc.active) AS x""").fetchone()["x"]

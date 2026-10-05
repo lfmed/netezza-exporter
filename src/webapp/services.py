@@ -2,6 +2,7 @@
 import logging
 import os
 import threading
+import time
 
 from databricks.sdk import WorkspaceClient
 
@@ -66,3 +67,35 @@ def cancel_dispatcher(actor: str) -> int:
     with db().tx() as conn:
         repo.log_event(conn, None, "DISPATCHER_CANCEL_REQUESTED", actor, {"runs": [r.run_id for r in runs]})
     return len(runs)
+
+
+_SCHEDULER_LOCK_KEY = 4207311  # advisory lock: só um processo do app dispara por vez
+_scheduler_started = False
+
+
+def _scheduler_tick():
+    with db().tx() as conn:
+        if not conn.execute("SELECT pg_try_advisory_xact_lock(%s) AS ok", (_SCHEDULER_LOCK_KEY,)).fetchone()["ok"]:
+            return
+        if repo.work_due(conn) and repo.live_dispatcher(db()) is None:
+            run_id = ensure_dispatcher()
+            if run_id:
+                repo.log_event(conn, None, "DISPATCHER_AUTO_TRIGGERED", "agendador-app", {"run_id": run_id})
+
+
+def start_scheduler(interval_s: int = 60):
+    """Dispara o dispatcher quando chega a hora de pedidos agendados (ou de retries com espera)."""
+    global _scheduler_started
+    if _scheduler_started or not _job_id():
+        return
+    _scheduler_started = True
+
+    def loop():
+        while True:
+            time.sleep(interval_s)
+            try:
+                _scheduler_tick()
+            except Exception:  # noqa: BLE001 - o agendador nunca deve morrer
+                log.exception("falha no agendador")
+
+    threading.Thread(target=loop, name="nzexport-scheduler", daemon=True).start()

@@ -9,9 +9,12 @@
     <label>Chamadas simultâneas (pedido)
       <input type="number" name="max_parallel" min="1" max="200" required value="{{ form.max_parallel if form else 2 }}">
     </label>
-    <label>Prazo/janela (opcional)<input type="datetime-local" name="deadline_at" value="{{ form.deadline_at if form else '' }}"></label>
+    <label>Agendar início (opcional)<input type="datetime-local" name="scheduled_start_at" value="{{ form.scheduled_start_at if form and form.scheduled_start_at else '' }}"></label>
+    <label>Prazo/janela final (opcional)<input type="datetime-local" name="deadline_at" value="{{ form.deadline_at if form else '' }}"></label>
   </div>
   <label>Observações<textarea name="notes" rows="2">{{ form.notes if form else '' }}</textarea></label>
+  <p class="hint">Datas e horas no fuso <b>{{ APP_TZ_NAME }}</b>. Com <b>início agendado</b>, nenhuma chamada é feita antes da data/hora informada; o app dispara a execução automaticamente.
+    Com <b>prazo/janela final</b>, nenhum subbloco novo começa depois do horário (o pedido fica Parado e pode ser retomado).</p>
   <p class="hint">O número de chamadas simultâneas do pedido é limitado também pelo máximo por tabela e pelo limite global da origem Netezza (Administração). O menor dos três vale.</p>
 </div>
 

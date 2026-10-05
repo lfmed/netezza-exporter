@@ -163,6 +163,7 @@ class Dispatcher:
                                            AND v.config_version = rt.config_version
                 WHERE s.status = 'PENDING' AND (s.next_attempt_at IS NULL OR s.next_attempt_at <= now())
                   AND r.status IN ('SUBMITTED', 'RUNNING')
+                  AND (r.scheduled_start_at IS NULL OR r.scheduled_start_at <= now())
                   AND (r.deadline_at IS NULL OR r.deadline_at > now())
                   AND tc.active
                 ORDER BY r.submitted_at, rt.ordinal, s.seq
@@ -213,6 +214,8 @@ class Dispatcher:
             SELECT EXISTS (SELECT 1 FROM export_subblock s JOIN export_request r USING (request_id)
                            JOIN table_config tc ON tc.table_config_id = s.table_config_id
                            WHERE s.status = 'PENDING' AND r.status IN ('SUBMITTED','RUNNING')
+                             -- pedidos agendados para depois não seguram o dispatcher: o app o dispara na hora
+                             AND (r.scheduled_start_at IS NULL OR r.scheduled_start_at <= now())
                              AND (r.deadline_at IS NULL OR r.deadline_at > now()) AND tc.active) AS x""")
         return row["x"]
 

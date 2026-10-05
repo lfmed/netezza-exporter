@@ -2,7 +2,8 @@
 import logging
 import os
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
 
@@ -13,13 +14,14 @@ from . import services
 
 log = logging.getLogger("nzexport.app")
 APP_VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text().strip()
+APP_TZ = ZoneInfo(os.environ.get("APP_TIMEZONE", "America/Sao_Paulo"))  # datas/horas digitadas e exibidas
 
 STATUS_LABEL = {
     "SUBMITTED": "Na fila", "RUNNING": "Executando", "STOPPING": "Parando", "STOPPED": "Parado",
     "FAILED": "Falhou", "COMPLETED": "Concluído", "CANCELED": "Encerrado",
     "PENDING": "Pendente", "DONE": "Concluído", "UNKNOWN": "Desconhecido", "SUPERSEDED": "Substituído",
     "SUCCEEDED": "Sucesso", "ABANDONED": "Abandonado",
-    "COMPLETA": "Completa", "EM_ANDAMENTO": "Em andamento", "INCOMPLETA": "Incompleta (lacunas)",
+    "SCHEDULED": "Agendado", "COMPLETA": "Completa", "EM_ANDAMENTO": "Em andamento", "INCOMPLETA": "Incompleta (lacunas)",
     "NAO_INICIADA": "Não iniciada", "COM_FALHAS": "Com falhas", "SEM_ESCOPO": "Sem escopo",
     "ESTADO_DESCONHECIDO": "Estado desconhecido", "INATIVA": "Inativa", "THIS_REQUEST": "Neste pedido",
 }
@@ -29,6 +31,11 @@ UNIT_LABEL = {"DAY": "dia(s)", "WEEK": "semana(s)", "MONTH": "mês(es)", "YEAR":
 def _user() -> str:
     return (request.headers.get("X-Forwarded-Email") or request.headers.get("X-Forwarded-Preferred-Username")
             or os.environ.get("LOCAL_USER", "local"))
+
+
+def _local_dt(v: str | None) -> datetime | None:
+    """datetime-local do formulário (sem fuso) interpretado no fuso do app."""
+    return datetime.fromisoformat(v).replace(tzinfo=APP_TZ) if v else None
 
 
 def _date(v: str) -> date:
@@ -97,7 +104,7 @@ def create_app() -> Flask:
         if not v:
             return "—"
         if isinstance(v, datetime):
-            return v.astimezone().strftime("%d/%m/%Y %H:%M:%S")
+            return v.astimezone(APP_TZ).strftime("%d/%m/%Y %H:%M:%S")
         return v.strftime("%d/%m/%Y") if isinstance(v, date) else str(v)
 
     @app.template_filter("pct")
@@ -112,9 +119,15 @@ def create_app() -> Flask:
         s = int((end - start).total_seconds())
         return f"{s // 3600}h{(s % 3600) // 60:02d}m" if s >= 3600 else f"{s // 60}m{s % 60:02d}s"
 
+    @app.template_filter("dtlocal")
+    def _fmt_dtlocal(v):
+        """Valor para <input type=datetime-local>."""
+        return v.astimezone(APP_TZ).strftime("%Y-%m-%dT%H:%M") if isinstance(v, datetime) else ""
+
     @app.context_processor
     def _ctx():
-        ctx = {"current_user": _user(), "nav_dispatcher": None, "nav_attention": 0}
+        ctx = {"current_user": _user(), "nav_dispatcher": None, "nav_attention": 0,
+               "now_utc": datetime.now(timezone.utc), "APP_TZ_NAME": str(APP_TZ)}
         if request.endpoint and request.endpoint != "static" and not request.path.endswith("/partial"):
             try:
                 db = services.db()
@@ -221,20 +234,25 @@ def create_app() -> Flask:
         db = services.db()
         try:
             rows = _parse_table_rows(request.form)
-            deadline = request.form.get("deadline_at") or None
+            scheduled = _local_dt(request.form.get("scheduled_start_at"))
+            if scheduled and scheduled <= datetime.now(timezone.utc):
+                raise ValueError("o início agendado precisa ser no futuro (deixe em branco para iniciar já)")
             rid = repo.create_request(
                 db, _user(), request.form.get("name", "").strip() or "pedido sem nome",
                 _int(request.form.get("max_parallel"), lo=1, hi=200),
-                datetime.fromisoformat(deadline).astimezone() if deadline else None,
-                request.form.get("notes") or None, rows)
+                _local_dt(request.form.get("deadline_at")),
+                request.form.get("notes") or None, rows, scheduled_start_at=scheduled)
         except repo.ConflictError as e:
             flash(f"Pedido não criado: {len(e.conflicts)} conflito(s) de período. Revise.", "error")
             return request_review()
         except ValueError as e:
             flash(str(e), "error")
             return redirect(url_for("request_new"))
-        services.ensure_dispatcher()
-        flash("Pedido criado e enviado para execução.", "info")
+        if scheduled:
+            flash(f"Pedido criado e agendado para {scheduled.strftime('%d/%m/%Y %H:%M')} ({APP_TZ}).", "info")
+        else:
+            services.ensure_dispatcher()
+            flash("Pedido criado e enviado para execução.", "info")
         return redirect(url_for("request_detail", request_id=rid))
 
     def _load_request(request_id):
@@ -284,6 +302,29 @@ def create_app() -> Flask:
     def request_cancel(request_id):
         repo.cancel_request(services.db(), request_id, _user(), request.form.get("reason") or None)
         flash("Pedido encerrado. Subblocos pendentes foram cancelados e os períodos liberados.", "info")
+        return redirect(url_for("request_detail", request_id=request_id))
+
+    @app.post("/requests/<request_id>/schedule")
+    def request_schedule(request_id):
+        action = request.form.get("action")
+        try:
+            if action == "now":
+                when = datetime.now(timezone.utc)
+            elif action == "clear":
+                when = None
+            else:
+                when = _local_dt(request.form.get("scheduled_start_at"))
+                if not when or when <= datetime.now(timezone.utc):
+                    raise ValueError("informe uma data/hora futura")
+            repo.reschedule_request(services.db(), request_id, _user(), when)
+        except ValueError as e:
+            flash(str(e), "error")
+            return redirect(url_for("request_detail", request_id=request_id))
+        if action in ("now", "clear"):
+            services.ensure_dispatcher()
+            flash("Execução iniciada.", "info")
+        else:
+            flash(f"Início reagendado para {when.strftime('%d/%m/%Y %H:%M')} ({APP_TZ}).", "info")
         return redirect(url_for("request_detail", request_id=request_id))
 
     @app.post("/requests/<request_id>/parallelism")
@@ -441,4 +482,6 @@ def create_app() -> Flask:
         services.db().one("SELECT 1 AS ok")
         return {"ok": True, "version": APP_VERSION}
 
+    if not app.testing and os.environ.get("DISABLE_SCHEDULER") != "1":
+        services.start_scheduler()
     return app

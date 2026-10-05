@@ -7,7 +7,8 @@
   <dl class="kv">
     <dt>Nome</dt><dd>{{ form.name }}</dd>
     <dt>Chamadas simultâneas (pedido)</dt><dd>{{ max_parallel }}</dd>
-    <dt>Prazo</dt><dd>{{ form.deadline_at or '—' }}</dd>
+    <dt>Início</dt><dd>{% if form.scheduled_start_at %}<span class="badge s-scheduled">Agendado</span> {{ form.scheduled_start_at|replace('T', ' ') }} ({{ APP_TZ_NAME }}){% else %}imediato, ao criar o pedido{% endif %}</dd>
+    <dt>Prazo/janela final</dt><dd>{{ form.deadline_at|replace('T', ' ') if form.deadline_at else '—' }}</dd>
     <dt>Total de chamadas</dt><dd><b>{{ rows|map(attribute='blocks')|map('length')|sum }}</b></dd>
   </dl>
 </div>
@@ -61,13 +62,13 @@
 {% endfor %}
 
 <form method="post" action="{{ url_for('request_create') }}" class="actions end">
-  {% for k in ['name', 'max_parallel', 'deadline_at', 'notes'] %}<input type="hidden" name="{{ k }}" value="{{ form.get(k, '') }}">{% endfor %}
+  {% for k in ['name', 'max_parallel', 'scheduled_start_at', 'deadline_at', 'notes'] %}<input type="hidden" name="{{ k }}" value="{{ form.get(k, '') }}">{% endfor %}
   {% for k in ['table', 'start', 'end', 'size', 'unit', 'aligned', 'reprocess', 'reason'] %}
     {% for v in form.getlist(k) %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
   {% endfor %}
   <a class="btn ghost" href="javascript:history.back()">Voltar e editar</a>
   <label class="check"><input type="checkbox" required> Confirmo que o pedido pode gerar grande volume de dados no destino</label>
   {% if nothing_to_run %}<span class="muted">Nenhum período novo a executar.</span>{% endif %}
-  <button class="btn" {{ 'disabled' if has_conflicts or nothing_to_run }}>Criar pedido e executar</button>
+  <button class="btn" {{ 'disabled' if has_conflicts or nothing_to_run }}>{{ 'Criar pedido agendado' if form.scheduled_start_at else 'Criar pedido e executar' }}</button>
 </form>
 {% endblock %}

@@ -40,16 +40,30 @@ migração está garantida quando todas as tabelas aparecem como `COMPLETA`.
 sobreposto. Isso vale para interseção parcial e para granularidades diferentes. Para exportar de novo um período,
 crie o pedido como **Reprocessar** e informe a justificativa. Os subblocos antigos ficam como `SUPERSEDED`.
 
+**Dispatcher.** É o Job que efetivamente chama a procedure. O app só grava pedidos; o dispatcher pega os
+subblocos prontos de **todos** os pedidos, respeita os limites de concorrência, faz heartbeat/lease, aplica retries e
+marca o resultado. Quando não há trabalho, ele encerra sozinho, e assim não consome compute parado.
+
+**Agendamento.** O pedido pode ter **início agendado**. Antes da data e hora informadas, nenhuma chamada é feita. Uma
+checagem do app, a cada minuto, dispara o dispatcher na hora certa. Na tela do pedido é possível
+**Iniciar agora** ou **reagendar**. O **prazo/janela final** impede que subblocos novos comecem depois do horário.
+Datas e horas usam o fuso `America/Sao_Paulo`.
+
+**Falhas.** O subbloco que falhou depois dos retries automáticos **continua reservando o período** até alguém decidir:
+- **Repetir** (um ou todos): volta para a fila.
+- **Cancelar** (com motivo): libera o período, que vira lacuna no painel e pode entrar em um novo pedido.
+
 **Estados do subbloco.**
 - `PENDING → RUNNING → DONE` é o caminho normal.
-- `FAILED` indica erro da procedure ou de conexão, depois de esgotar os retries automáticos.
+- `FAILED` indica erro da procedure ou de conexão, depois de esgotar os retries automáticos. Aguarda repetir ou
+  cancelar.
 - `UNKNOWN` indica que a chamada foi enviada e a conexão caiu ou o worker parou. Nesse caso, é preciso reconciliar
   manualmente ou reexecutar, o que só é seguro se a procedure for idempotente.
 
 **Ações.**
 - **Parar**: não inicia subblocos novos e deixa terminar os que estão em execução.
 - **Retomar**: continua os pendentes, com opção de repetir os falhos e os desconhecidos.
-- **Encerrar**: cancela os pendentes e libera o período.
+- **Encerrar**: cancela os pendentes e os falhos e libera o período.
 
 ## Operação
 
