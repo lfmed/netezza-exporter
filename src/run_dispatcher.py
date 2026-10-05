@@ -26,6 +26,8 @@ def main():
     p.add_argument("--grant-role", default="", help="roles (vírgula) que recebem acesso ao schema")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    version_file = os.path.join(os.path.dirname(os.path.abspath(inspect.currentframe().f_code.co_filename)), "VERSION")
+    logging.info("nzexport dispatcher versão %s", open(version_file).read().strip())
 
     w = WorkspaceClient()
     cfg = LakebaseConfig(endpoint=a.endpoint, database=a.database, w=w)

@@ -3,19 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Exportador Netezza{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <title>{% block title %}Sicoob · Migração Netezza{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Asap:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=APP_VERSION) }}">
 </head>
 <body>
 <header class="topbar">
-  <a class="brand" href="{{ url_for('dashboard') }}"><span class="logo">NZ</span> Exportador Netezza</a>
+  <a class="brand" href="{{ url_for('dashboard') }}"><span class="mark"></span>
+    <span class="word"><b>sicoob</b><small>Migração Netezza</small></span></a>
   <nav>
     <a href="{{ url_for('dashboard') }}" class="{{ 'on' if request.endpoint == 'dashboard' }}">Painel</a>
     <a href="{{ url_for('requests_list') }}" class="{{ 'on' if request.endpoint in ('requests_list', 'request_detail') }}">Pedidos</a>
     <a href="{{ url_for('request_new') }}" class="{{ 'on' if request.endpoint in ('request_new', 'request_review') }}">Novo pedido</a>
     <a href="{{ url_for('admin') }}" class="{{ 'on' if request.endpoint and request.endpoint.startswith('admin') }}">Administração</a>
   </nav>
-  <span class="user">{{ current_user }}</span>
+  <span class="user">{{ current_user }}<span class="ver">v{{ APP_VERSION }}</span></span>
 </header>
 <main>
   {% with msgs = get_flashed_messages(with_categories=true) %}
@@ -23,7 +26,8 @@
   {% endwith %}
   {% block content %}{% endblock %}
 </main>
-<script src="{{ url_for('static', filename='app.js') }}"></script>
+<footer class="foot"><span>Exportador Netezza → Databricks · versão {{ APP_VERSION }}</span><span>Lakebase · Lakeflow Jobs</span></footer>
+<script src="{{ url_for('static', filename='app.js', v=APP_VERSION) }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

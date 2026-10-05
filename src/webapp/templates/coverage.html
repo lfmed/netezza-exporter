@@ -19,7 +19,7 @@
     <dt>Em execução/pendente</dt><dd>{{ t.inflight_days }} dias · {{ t.running }} subbloco(s) executando, {{ t.pending }} pendente(s)</dd>
     <dt>Exportado fora do escopo</dt><dd>{{ t.done_outside_days }} dias</dd>
   </dl>
-  {% if t.scope_days %}{{ progress(t.done_days, t.scope_days, t.failed_days + t.unknown_days, t.inflight_days) }}{% endif %}
+  {% if t.scope_days %}{{ progress(t.done_days, t.scope_days, t.failed_days + t.unknown_days, t.inflight_days, 'dias') }}{% endif %}
 </div>
 <div class="cols3">
   {% for kind, title, cls in [('missing', 'Lacunas (sem pedido)', 'warn-text'), ('failed', 'Falha definitiva', 'bad-text'), ('unknown', 'Estado desconhecido', 'warn-text')] %}

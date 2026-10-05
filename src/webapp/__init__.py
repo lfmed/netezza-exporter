@@ -1,6 +1,7 @@
 """App Flask: plano de controle do exportador Netezza."""
 import logging
 import os
+from pathlib import Path
 from datetime import date, datetime
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
@@ -11,6 +12,7 @@ from nzexport.planner import UNITS
 from . import services
 
 log = logging.getLogger("nzexport.app")
+APP_VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text().strip()
 
 STATUS_LABEL = {
     "SUBMITTED": "Na fila", "RUNNING": "Executando", "STOPPING": "Parando", "STOPPED": "Parado",
@@ -87,7 +89,8 @@ def _form_rows(form) -> list[dict]:
 def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
-    app.jinja_env.globals.update(STATUS_LABEL=STATUS_LABEL, UNIT_LABEL=UNIT_LABEL, UNITS=UNITS)
+    app.jinja_env.globals.update(STATUS_LABEL=STATUS_LABEL, UNIT_LABEL=UNIT_LABEL, UNITS=UNITS,
+                                  APP_VERSION=APP_VERSION)
 
     @app.template_filter("dt")
     def _fmt_dt(v):
@@ -392,6 +395,6 @@ def create_app() -> Flask:
     @app.get("/healthz")
     def healthz():
         services.db().one("SELECT 1 AS ok")
-        return {"ok": True}
+        return {"ok": True, "version": APP_VERSION}
 
     return app

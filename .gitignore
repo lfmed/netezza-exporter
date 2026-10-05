@@ -7,3 +7,5 @@ __pycache__/
 .claude-sessions.log
 .env
 .DS_Store
+scripts/.gunicorn.log
+scripts/screenshots/
