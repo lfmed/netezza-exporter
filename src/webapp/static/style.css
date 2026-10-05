@@ -131,3 +131,5 @@ details summary { cursor: pointer; color: var(--teal-d); margin: 8px 0; font-wei
 .grid th.sortable::after { content: " ↕"; opacity: .4; }
 .grid th.sortable[data-dir="asc"]::after { content: " ▲"; opacity: 1; color: var(--teal-d); }
 .grid th.sortable[data-dir="desc"]::after { content: " ▼"; opacity: 1; color: var(--teal-d); }
+.csv-import { display: flex; flex-direction: column; gap: 8px; margin: 0 0 16px; }
+.csv-import input[type=file] { padding: 6px; background: #fff; }

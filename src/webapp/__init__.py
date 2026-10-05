@@ -5,9 +5,9 @@ from pathlib import Path
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, url_for
 
-from nzexport import repo
+from nzexport import repo, table_csv
 from nzexport.planner import UNITS
 
 from . import services
@@ -96,6 +96,7 @@ def _form_rows(form) -> list[dict]:
 def create_app() -> Flask:
     app = Flask(__name__)
     app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
+    app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # upload de CSV
     app.jinja_env.globals.update(STATUS_LABEL=STATUS_LABEL, UNIT_LABEL=UNIT_LABEL, UNITS=UNITS,
                                   APP_VERSION=APP_VERSION)
 
@@ -456,6 +457,59 @@ def create_app() -> Flask:
             flash(f"Tabela {tid} salva (versão {v}).", "info")
         except (ValueError, KeyError) as e:
             flash(f"Erro: {e}", "error")
+        return redirect(url_for("admin"))
+
+    # ------------------------------------------------------------ carga de tabelas via CSV
+    def _csv_response(text: str, filename: str) -> Response:
+        return Response(text.encode("utf-8"), mimetype="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+    @app.get("/admin/tables/template.csv")
+    def admin_tables_template():
+        return _csv_response(table_csv.template_csv(), "modelo_tabelas_exportaveis.csv")
+
+    @app.get("/admin/tables/export.csv")
+    def admin_tables_export():
+        return _csv_response(table_csv.export_csv(repo.list_tables(services.db())),
+                             f"tabelas_exportaveis_{date.today().isoformat()}.csv")
+
+    def _import_preview(text: str, filename: str):
+        db = services.db()
+        sources = [x["source_id"] for x in repo.list_sources(db)]
+        rows = table_csv.parse(text, sources)
+        current = {t["table_config_id"]: t for t in repo.list_tables(db)}
+        return table_csv.classify(rows, current)
+
+    @app.post("/admin/tables/import")
+    def admin_tables_import():
+        f = request.files.get("csv_file")
+        if not f or not f.filename:
+            flash("Selecione um arquivo CSV.", "error")
+            return redirect(url_for("admin"))
+        try:
+            text = table_csv.decode(f.read())
+            rows = _import_preview(text, f.filename)
+        except ValueError as e:
+            flash(f"Arquivo não importado: {e}", "error")
+            return redirect(url_for("admin"))
+        return render_template("admin_import.html", rows=rows, csv_text=text, filename=f.filename,
+                               columns=table_csv.COLUMNS)
+
+    @app.post("/admin/tables/import/confirm")
+    def admin_tables_import_confirm():
+        text, filename = request.form.get("csv_text", ""), request.form.get("filename", "arquivo.csv")
+        try:
+            rows = _import_preview(text, filename)
+        except ValueError as e:
+            flash(f"Arquivo não importado: {e}", "error")
+            return redirect(url_for("admin"))
+        if any(r.action == "ERRO" for r in rows):
+            flash("Corrija as linhas com erro antes de importar.", "error")
+            return render_template("admin_import.html", rows=rows, csv_text=text, filename=filename,
+                                   columns=table_csv.COLUMNS)
+        c = repo.import_tables(services.db(), _user(), rows, filename)
+        flash(f"Importação concluída: {c['NOVA']} tabela(s) nova(s), {c['NOVA_VERSAO']} nova(s) versão(ões), "
+              f"{c['SEM_ALTERACAO']} sem alteração.", "info")
         return redirect(url_for("admin"))
 
     @app.post("/admin/hooks")

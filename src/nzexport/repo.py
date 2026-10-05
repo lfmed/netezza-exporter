@@ -80,24 +80,44 @@ TABLE_VERSION_FIELDS = ("source_table", "procedure_name", "default_subblock_unit
 
 def save_table(db: Database, actor: str, table_config_id: str, source_id: str, active: bool, fields: dict):
     """Cria a tabela ou grava uma nova versão imutável da configuração."""
-    vals = [fields.get(f) for f in TABLE_VERSION_FIELDS]
     with db.tx() as conn:
-        cur = conn.execute("SELECT current_version FROM table_config WHERE table_config_id = %s FOR UPDATE",
-                           (table_config_id,)).fetchone()
-        if cur is None:
-            version = 1
-            conn.execute("INSERT INTO table_config (table_config_id, source_id, active, current_version) "
-                         "VALUES (%s,%s,%s,1)", (table_config_id, source_id, active))
-        else:
-            version = cur["current_version"] + 1
-        conn.execute(
-            f"INSERT INTO table_config_version (table_config_id, config_version, {', '.join(TABLE_VERSION_FIELDS)}, created_by) "
-            f"VALUES (%s, %s, {', '.join(['%s'] * len(TABLE_VERSION_FIELDS))}, %s)",
-            (table_config_id, version, *vals, actor))
-        conn.execute("UPDATE table_config SET current_version = %s, source_id = %s, active = %s "
-                     "WHERE table_config_id = %s", (version, source_id, active, table_config_id))
-        log_event(conn, None, "TABLE_CONFIG_SAVED", actor, {"table_config_id": table_config_id, "version": version})
+        return _save_table(conn, actor, table_config_id, source_id, active, fields)
+
+
+def _save_table(conn, actor: str, table_config_id: str, source_id: str, active: bool, fields: dict,
+                origin: str = "form") -> int:
+    vals = [fields.get(f) for f in TABLE_VERSION_FIELDS]
+    cur = conn.execute("SELECT current_version FROM table_config WHERE table_config_id = %s FOR UPDATE",
+                       (table_config_id,)).fetchone()
+    if cur is None:
+        version = 1
+        conn.execute("INSERT INTO table_config (table_config_id, source_id, active, current_version) "
+                     "VALUES (%s,%s,%s,1)", (table_config_id, source_id, active))
+    else:
+        version = cur["current_version"] + 1
+    conn.execute(
+        f"INSERT INTO table_config_version (table_config_id, config_version, {', '.join(TABLE_VERSION_FIELDS)}, created_by) "
+        f"VALUES (%s, %s, {', '.join(['%s'] * len(TABLE_VERSION_FIELDS))}, %s)",
+        (table_config_id, version, *vals, actor))
+    conn.execute("UPDATE table_config SET current_version = %s, source_id = %s, active = %s "
+                 "WHERE table_config_id = %s", (version, source_id, active, table_config_id))
+    log_event(conn, None, "TABLE_CONFIG_SAVED", actor,
+              {"table_config_id": table_config_id, "version": version, "origin": origin})
     return version
+
+
+def import_tables(db: Database, actor: str, rows: list, filename: str) -> dict:
+    """Aplica as linhas válidas de um CSV numa única transação (tudo ou nada)."""
+    counts = {"NOVA": 0, "NOVA_VERSAO": 0, "SEM_ALTERACAO": 0}
+    with db.tx() as conn:
+        for r in rows:
+            counts[r.action] += 1
+            if r.action in ("NOVA", "NOVA_VERSAO"):
+                v = r.values
+                _save_table(conn, actor, v["table_config_id"], v["source_id"], v["active"],
+                            {f: v.get(f) for f in TABLE_VERSION_FIELDS}, origin=f"csv:{filename}")
+        log_event(conn, None, "TABLES_CSV_IMPORTED", actor, {"file": filename, **counts})
+    return counts
 
 
 def list_hooks(db: Database):

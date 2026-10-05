@@ -30,7 +30,18 @@
 </div>
 
 <div class="card">
-  <div class="split"><h2>Tabelas exportáveis</h2><a class="btn" href="{{ url_for('admin_table_form') }}">+ Nova tabela</a></div>
+  <div class="split"><h2>Tabelas exportáveis</h2>
+    <div class="actions">
+      <a class="btn ghost" href="{{ url_for('admin_tables_template') }}">⬇️ Baixar modelo CSV</a>
+      <a class="btn ghost" href="{{ url_for('admin_tables_export') }}">⬇️ Exportar tabelas (CSV)</a>
+      <a class="btn" href="{{ url_for('admin_table_form') }}">+ Nova tabela</a>
+    </div>
+  </div>
+  <form method="post" action="{{ url_for('admin_tables_import') }}" enctype="multipart/form-data" class="lp-note csv-import">
+    <b>📥 Carga via CSV</b>
+    <span>Baixe o modelo, preencha uma linha por tabela e envie. Tabelas novas são criadas; as existentes ganham uma nova versão só se algo mudou. Você revisa tudo antes de gravar.</span>
+    <span class="actions"><input type="file" name="csv_file" accept=".csv,text/csv" required><button class="btn">Pré-visualizar importação</button></span>
+  </form>
   <table class="grid">
     <thead><tr><th>ID</th><th>Ativa</th><th>Tabela (parâmetro)</th><th>Procedure</th><th>Subbloco padrão</th><th>Máx. paralelo</th><th>Timeout</th><th>Retries</th><th>Escopo da migração</th><th>Versão</th></tr></thead>
     <tbody>{% for t in tables %}

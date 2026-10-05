@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 0.996 — 2026-10-05
+- Administração: carga de tabelas exportáveis via CSV (modelo com exemplos, exportação no mesmo formato, prévia com novas/novas versões/erros por linha, importação tudo-ou-nada).
+
 ## 0.995 — 2026-10-05
 - Painel: ordenação da tabela de completude por percentual migrado (menor/maior), nome, lacunas ou falhas; cabeçalhos clicáveis e preferência lembrada no navegador.
 

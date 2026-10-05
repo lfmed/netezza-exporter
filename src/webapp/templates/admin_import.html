@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% set n_err = rows|selectattr('action', 'equalto', 'ERRO')|list|length %}
+{% set n_new = rows|selectattr('action', 'equalto', 'NOVA')|list|length %}
+{% set n_ver = rows|selectattr('action', 'equalto', 'NOVA_VERSAO')|list|length %}
+{% set n_same = rows|selectattr('action', 'equalto', 'SEM_ALTERACAO')|list|length %}
+{% block content %}
+<section class="head">
+  <div><h1>📥 Importação de tabelas — revisão</h1><p>Arquivo <b>{{ filename }}</b> · {{ rows|length }} linha(s). Nada foi gravado ainda.</p></div>
+</section>
+<div class="card">
+  <div class="kpis">
+    <div class="ok"><span class="big">{{ n_new }}</span><small>tabelas novas</small></div>
+    <div><span class="big">{{ n_ver }}</span><small>novas versões</small></div>
+    <div><span class="big">{{ n_same }}</span><small>sem alteração</small></div>
+    <div class="err"><span class="big">{{ n_err }}</span><small>linhas com erro</small></div>
+  </div>
+  {% if n_err %}<div class="flash error">Há {{ n_err }} linha(s) com erro. Corrija o arquivo e envie de novo: a importação é tudo ou nada.</div>{% endif %}
+  <table class="grid compact">
+    <thead><tr><th>Linha</th><th>Tabela</th><th>Ação</th><th>Detalhes</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.line }}</td>
+        <td><b>{{ r.values.table_config_id or r.raw.table_config_id }}</b><br><small class="muted">{{ r.values.source_table }}</small></td>
+        <td>{% if r.action == 'ERRO' %}<span class="badge s-failed">Erro</span>{% elif r.action == 'NOVA' %}<span class="badge s-completa">Nova</span>
+            {% elif r.action == 'NOVA_VERSAO' %}<span class="badge s-running">Nova versão</span>{% else %}<span class="badge">Sem alteração</span>{% endif %}</td>
+        <td>
+          {% if r.errors %}<ul class="bad-text" style="margin:0;padding-left:18px">{% for e in r.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+          {% elif r.changes %}{% for c in r.changes %}<small><code>{{ c.field }}</code>: {{ c.old if c.old is not none else '—' }} → <b>{{ c.new if c.new is not none else '—' }}</b></small><br>{% endfor %}
+          {% elif r.action == 'NOVA' %}<small class="muted"><code>{{ r.values.procedure_name }}</code> · subbloco {{ r.values.default_subblock_size }} {{ UNIT_LABEL[r.values.default_subblock_unit] }} · até {{ r.values.max_parallel }} simultânea(s)
+            {% if r.values.migration_start %}· escopo {{ r.values.migration_start|dt }} → {{ r.values.migration_end|dt }}{% else %}· <span class="warn-text">sem escopo</span>{% endif %}</small>
+          {% else %}<small class="muted">igual à versão atual</small>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<form method="post" action="{{ url_for('admin_tables_import_confirm') }}" class="actions end">
+  <textarea name="csv_text" hidden>{{ csv_text }}</textarea>
+  <input type="hidden" name="filename" value="{{ filename }}">
+  <a class="btn ghost" href="{{ url_for('admin') }}">Cancelar</a>
+  <button class="btn" {{ 'disabled' if n_err or not (n_new or n_ver) }}>Importar {{ n_new + n_ver }} tabela(s)</button>
+</form>
+<details class="card"><summary>Colunas do arquivo</summary>
+  <table class="grid compact"><thead><tr><th>Coluna</th><th>Obrigatória</th><th>Descrição</th></tr></thead><tbody>
+  {% for name, req, desc in columns %}<tr><td><code>{{ name }}</code></td><td>{{ 'sim' if req else 'não' }}</td><td>{{ desc }}</td></tr>{% endfor %}
+  </tbody></table>
+</details>
+{% endblock %}

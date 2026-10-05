@@ -1,0 +1,4 @@
+﻿table_config_id;source_id;active;source_table;procedure_name;default_subblock_unit;default_subblock_size;max_parallel;call_timeout_min;max_retries;retry_unknown;migration_start;migration_end;description
+FATO_VENDAS;netezza;sim;DW.FATO_VENDAS;ADMIN.SP_EXPORTA_TABELA;MES;1;2;240;2;não;2015-01-01;2025-12-31;Vendas diárias por cooperativa
+FATO_SAUDE;netezza;sim;DW.FATO_SAUDE;ADMIN.SP_EXPORTA_TABELA;MES;3;1;480;1;não;01/01/2018;31/12/2025;Exemplo com subbloco trimestral e datas DD/MM/AAAA
+FATO_DOC;netezza;sim;DW.FATO_DOC;ADMIN.SP_EXPORTA_TABELA;DIA;7;4;120;2;não;2024-01-01;2025-12-31;Exemplo com subbloco semanal (7 dias)
