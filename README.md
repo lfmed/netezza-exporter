@@ -24,6 +24,18 @@ App Flask (SP do app) ──grava pedido/subblocos──▶ Lakebase (nzexport)
 2. **Por tabela**, em `Administração → Tabela → Máx. chamadas simultâneas`.
 3. **Por pedido**, definido ao criar o pedido. Pode ser alterado durante a execução, na tela do pedido.
 
+**Completude da migração (painel).** Cada tabela tem um **escopo de migração**: primeiro e último dia de
+dados a migrar, definidos em Administração. O painel compara o escopo com os subblocos e mostra:
+- **% migrado**: dias do escopo com subbloco concluído.
+- **Em execução**: dias pendentes ou executando.
+- **Lacunas**: dias do escopo sem nenhum subbloco vivo, seja porque nunca foram pedidos, foram cancelados ou falharam
+  em definitivo.
+- **Falha e desconhecido**: dias com problema.
+
+Status por tabela: `COMPLETA`, `EM_ANDAMENTO`, `INCOMPLETA`, `COM_FALHAS`, `ESTADO_DESCONHECIDO`, `NAO_INICIADA` e
+`SEM_ESCOPO`. O botão **Criar pedido para as lacunas** monta um pedido com exatamente os intervalos que faltam. A
+migração está garantida quando todas as tabelas aparecem como `COMPLETA`.
+
 **Duplicidade.** Uma constraint `EXCLUDE` no Postgres impede dois subblocos vivos da mesma tabela com período
 sobreposto. Isso vale para interseção parcial e para granularidades diferentes. Para exportar de novo um período,
 crie o pedido como **Reprocessar** e informe a justificativa. Os subblocos antigos ficam como `SUPERSEDED`.

@@ -73,8 +73,7 @@ def get_table(db: Database, table_config_id: str):
 
 TABLE_VERSION_FIELDS = ("source_table", "procedure_name", "default_subblock_unit", "default_subblock_size",
                         "max_parallel", "call_timeout_min", "max_retries", "retry_unknown",
-                        "expected_periodicity_unit", "expected_periodicity_size",
-                        "periodicity_tolerance_days", "description")
+                        "migration_start", "migration_end", "description")
 
 
 def save_table(db: Database, actor: str, table_config_id: str, source_id: str, active: bool, fields: dict):
@@ -350,8 +349,33 @@ def resolve_unknown(db: Database, subblock_id: str, actor: str, done: bool, reas
         log_event(conn, sb["request_id"], f"SUBBLOCK_MARKED_{new}", actor, {"reason": reason}, subblock_id)
 
 
-def table_load_status(db: Database):
-    return db.query("SELECT * FROM v_table_load_status ORDER BY table_config_id")
+def migration_coverage(db: Database):
+    return db.query("SELECT * FROM v_migration_coverage ORDER BY table_config_id")
+
+
+def table_ranges(db: Database, table_config_id: str) -> dict[str, list[dict]]:
+    """Intervalos (datas inclusivas) por situação dentro do escopo: lacunas, falhas e desconhecidos."""
+    out = {}
+    for kind, col in (("missing", "missing_ranges"), ("failed", "failed_ranges"), ("unknown", "unknown_ranges")):
+        out[kind] = db.query(f"""
+            SELECT lower(r) AS data_ini, upper(r) - 1 AS data_fim, upper(r) - lower(r) AS days
+            FROM v_migration_coverage c, unnest(c.{col}::datemultirange) r
+            WHERE c.table_config_id = %s ORDER BY lower(r)""", (table_config_id,))
+    return out
+
+
+def gap_rows(db: Database, table_ids: list[str]) -> list[dict]:
+    """Linhas de pedido que cobrem exatamente as lacunas do escopo das tabelas escolhidas."""
+    rows = []
+    for tid in table_ids:
+        cfg = get_table(db, tid)
+        if not cfg:
+            continue
+        for g in table_ranges(db, tid)["missing"]:
+            rows.append({"table": tid, "start": g["data_ini"].isoformat(), "end": g["data_fim"].isoformat(),
+                         "size": str(cfg["default_subblock_size"]), "unit": cfg["default_subblock_unit"],
+                         "aligned": "1", "reprocess": "0", "reason": ""})
+    return rows
 
 
 def live_dispatcher(db: Database):

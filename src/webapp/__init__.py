@@ -17,8 +17,9 @@ STATUS_LABEL = {
     "FAILED": "Falhou", "COMPLETED": "Concluído", "CANCELED": "Encerrado",
     "PENDING": "Pendente", "DONE": "Concluído", "UNKNOWN": "Desconhecido", "SUPERSEDED": "Substituído",
     "SUCCEEDED": "Sucesso", "ABANDONED": "Abandonado",
-    "EM_DIA": "Em dia", "ATRASADA": "Atrasada", "SEM_CARGA": "Sem carga", "SEM_PERIODICIDADE": "Sem periodicidade",
-    "ESTADO_DESCONHECIDO": "Estado desconhecido", "FALHAS_RECORRENTES": "Falhas recorrentes", "INATIVA": "Inativa",
+    "COMPLETA": "Completa", "EM_ANDAMENTO": "Em andamento", "INCOMPLETA": "Incompleta (lacunas)",
+    "NAO_INICIADA": "Não iniciada", "COM_FALHAS": "Com falhas", "SEM_ESCOPO": "Sem escopo",
+    "ESTADO_DESCONHECIDO": "Estado desconhecido", "INATIVA": "Inativa",
 }
 UNIT_LABEL = {"DAY": "dia(s)", "WEEK": "semana(s)", "MONTH": "mês(es)", "YEAR": "ano(s)"}
 
@@ -121,8 +122,13 @@ def create_app() -> Flask:
     @app.get("/")
     def dashboard():
         db = services.db()
-        return render_template("dashboard.html",
-                               tables=repo.table_load_status(db),
+        tables = repo.migration_coverage(db)
+        scoped = [t for t in tables if t["scope_days"]]
+        overall = {k: sum(t[k] for t in scoped) for k in ("scope_days", "done_days", "inflight_days",
+                                                          "failed_days", "unknown_days", "missing_days")}
+        overall["complete_tables"] = sum(1 for t in tables if t["coverage_status"] == "COMPLETA")
+        overall["tables"] = len(tables)
+        return render_template("dashboard.html", tables=tables, overall=overall,
                                active=repo.list_requests(db, limit=20),
                                dispatcher=repo.live_dispatcher(db),
                                runs=repo.recent_dispatcher_runs(db, 5))
@@ -151,6 +157,32 @@ def create_app() -> Flask:
     def request_new():
         tables = repo.list_tables(services.db(), only_active=True)
         return render_template("request_new.html", tables=tables, form=None, rows=[])
+
+    @app.post("/requests/gaps")
+    def request_from_gaps():
+        """Pré-preenche um pedido com as lacunas de migração das tabelas selecionadas."""
+        db = services.db()
+        ids = request.form.getlist("table_ids")
+        rows = repo.gap_rows(db, ids)
+        if not rows:
+            flash("As tabelas selecionadas não têm lacunas no escopo de migração.", "info")
+            return redirect(url_for("dashboard"))
+        form = {"name": "Lacunas de migração — " + ", ".join(ids), "max_parallel": "2", "deadline_at": "", "notes":
+                "Pedido gerado a partir das lacunas do painel de completude."}
+        return render_template("request_new.html", tables=repo.list_tables(db, only_active=True),
+                               form=form, rows=rows)
+
+    @app.get("/coverage/<table_config_id>")
+    def coverage_detail(table_config_id):
+        db = services.db()
+        cov = next((t for t in repo.migration_coverage(db) if t["table_config_id"] == table_config_id), None)
+        if not cov:
+            abort(404)
+        reqs = db.query("""SELECT DISTINCT r.request_id, r.request_name, r.status, r.submitted_at, rt.period_start,
+                                  rt.period_end, rt.is_reprocess
+                           FROM export_request_table rt JOIN export_request r USING (request_id)
+                           WHERE rt.table_config_id = %s ORDER BY r.submitted_at DESC""", (table_config_id,))
+        return render_template("coverage.html", t=cov, ranges=repo.table_ranges(db, table_config_id), reqs=reqs)
 
     @app.post("/requests/review")
     def request_review():
@@ -317,7 +349,10 @@ def create_app() -> Flask:
             tid = f["table_config_id"].strip().upper()
             if not tid:
                 raise ValueError("identificador obrigatório")
-            per_unit = f.get("expected_periodicity_unit") or None
+            mig_start = _date(f["migration_start"]) if f.get("migration_start") else None
+            mig_end = _date(f["migration_end"]) if f.get("migration_end") else None
+            if mig_start and mig_end and mig_start > mig_end:
+                raise ValueError("início do escopo maior que o fim")
             fields = dict(
                 source_table=f["source_table"].strip(), procedure_name=f["procedure_name"].strip(),
                 default_subblock_unit=f["default_subblock_unit"],
@@ -326,9 +361,7 @@ def create_app() -> Flask:
                 call_timeout_min=_int(f["call_timeout_min"], lo=1),
                 max_retries=_int(f["max_retries"], lo=0, hi=10),
                 retry_unknown=f.get("retry_unknown") == "1",
-                expected_periodicity_unit=per_unit,
-                expected_periodicity_size=_int(f.get("expected_periodicity_size"), 1, 1) if per_unit else None,
-                periodicity_tolerance_days=_int(f.get("periodicity_tolerance_days"), 0, 0),
+                migration_start=mig_start, migration_end=mig_end,
                 description=f.get("description") or None)
             v = repo.save_table(services.db(), _user(), tid, f["source_id"], f.get("active") == "1", fields)
             flash(f"Tabela {tid} salva (versão {v}).", "info")

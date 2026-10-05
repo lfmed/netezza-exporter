@@ -30,7 +30,7 @@
   <tr>
     <td><select name="table" required class="tbl-select">
       <option value="">— selecione —</option>
-      {% for t in tables %}<option value="{{ t.table_config_id }}" data-unit="{{ t.default_subblock_unit }}" data-size="{{ t.default_subblock_size }}">{{ t.table_config_id }} ({{ t.source_table }})</option>{% endfor %}
+      {% for t in tables %}<option value="{{ t.table_config_id }}" data-unit="{{ t.default_subblock_unit }}" data-size="{{ t.default_subblock_size }}" data-start="{{ t.migration_start or '' }}" data-end="{{ t.migration_end or '' }}">{{ t.table_config_id }} ({{ t.source_table }})</option>{% endfor %}
     </select></td>
     <td><input type="date" name="start" required></td>
     <td><input type="date" name="end" required></td>

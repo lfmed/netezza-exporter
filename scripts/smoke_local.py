@@ -26,12 +26,12 @@ db = Database(LakebaseConfig(endpoint=ENDPOINT, w=WorkspaceClient(profile=PROFIL
 
 repo.save_source(db, ACTOR, "netezza", "Netezza (simulado)", "fake", None, 3, 30,
                  {"min_s": 1, "max_s": 3, "fail_pct": 15})
-for tid, tbl, per in (("FATO_VENDAS", "DW.FATO_VENDAS", "MONTH"), ("FATO_ESTOQUE", "DW.FATO_ESTOQUE", "DAY")):
+for tid, tbl in (("FATO_VENDAS", "DW.FATO_VENDAS"), ("FATO_ESTOQUE", "DW.FATO_ESTOQUE")):
     if repo.get_table(db, tid) is None:
         repo.save_table(db, ACTOR, tid, "netezza", True, dict(
             source_table=tbl, procedure_name="ADMIN.SP_EXPORTA_TABELA", default_subblock_unit="MONTH",
             default_subblock_size=1, max_parallel=2, call_timeout_min=60, max_retries=1, retry_unknown=False,
-            expected_periodicity_unit=per, expected_periodicity_size=1, periodicity_tolerance_days=5,
+            migration_start=date(2000, 1, 1), migration_end=date(2025, 12, 31),
             description="tabela de exemplo"))
 
 tag = int(time.time())

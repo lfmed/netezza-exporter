@@ -23,10 +23,10 @@
       <select name="retry_unknown"><option value="0">Não</option><option value="1" {{ 'selected' if t and t.retry_unknown }}>Sim</option></select></label>
   </div>
   <div class="row">
-    <label>Periodicidade esperada<span class="nowrap"><input type="number" name="expected_periodicity_size" min="1" value="{{ t.expected_periodicity_size if t and t.expected_periodicity_size else 1 }}" style="width:5em">
-      <select name="expected_periodicity_unit"><option value="">(nenhuma)</option>{% for u in UNITS %}<option value="{{ u }}" {{ 'selected' if t and t.expected_periodicity_unit == u }}>{{ UNIT_LABEL[u] }}</option>{% endfor %}</select></span></label>
-    <label>Tolerância (dias)<input type="number" name="periodicity_tolerance_days" min="0" value="{{ t.periodicity_tolerance_days if t else 0 }}"></label>
+    <label>Escopo da migração — primeiro dia de dados<input type="date" name="migration_start" value="{{ t.migration_start if t and t.migration_start else '' }}"></label>
+    <label>Último dia de dados (inclusivo)<input type="date" name="migration_end" value="{{ t.migration_end if t and t.migration_end else '' }}"></label>
   </div>
+  <p class="hint">O escopo é o período total que precisa existir migrado (ex.: <code>MIN</code> e <code>MAX</code> da coluna de data no Netezza). O painel mede a completude contra ele e aponta as lacunas.</p>
   <label>Descrição<textarea name="description" rows="2">{{ t.description or '' if t else '' }}</textarea></label>
   <div class="actions end"><a class="btn ghost" href="{{ url_for('admin') }}">Cancelar</a><button class="btn">Salvar nova versão</button></div>
 </form>

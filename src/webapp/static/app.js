@@ -9,6 +9,10 @@ function initRequestForm(rows) {
     sel.addEventListener('change', () => {
       const o = sel.selectedOptions[0];
       if (o && o.dataset.unit) { tr.querySelector('[name=unit]').value = o.dataset.unit; tr.querySelector('[name=size]').value = o.dataset.size; }
+      // sugere o escopo de migração da tabela quando as datas ainda estão vazias
+      const st = tr.querySelector('[name=start]'), en = tr.querySelector('[name=end]');
+      if (o && o.dataset.start && !st.value) st.value = o.dataset.start;
+      if (o && o.dataset.end && !en.value) en.value = o.dataset.end;
     });
     tr.querySelector('.rm').addEventListener('click', () => { if (tbody.children.length > 1) tr.remove(); });
     if (data) for (const [k, v] of Object.entries(data)) { const el = tr.querySelector(`[name=${k}]`); if (el) el.value = v; }

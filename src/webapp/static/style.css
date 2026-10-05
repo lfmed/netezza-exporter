@@ -60,3 +60,11 @@ form.inline { display: inline-flex; gap: 8px; align-items: center; }
 .filters { display: flex; gap: 10px; margin-bottom: 10px; }
 details summary { cursor: pointer; color: var(--accent); margin: 8px 0; }
 @media (max-width: 960px) { .cols { grid-template-columns: 1fr; } }
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 12px; }
+.kpis > div { display: flex; flex-direction: column; } .kpis .big { font-size: 26px; font-weight: 700; }
+.kpis small { color: var(--muted); }
+.cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.s-completa { background: #dafbe1; color: var(--ok); } .s-em_andamento { background: #ddf4ff; color: #0550ae; }
+.s-incompleta, .s-com_falhas { background: #ffebe9; color: var(--bad); }
+.s-nao_iniciada, .s-sem_escopo { background: #eef0f2; color: #57606a; }
+@media (max-width: 960px) { .kpis, .cols3 { grid-template-columns: 1fr 1fr; } }

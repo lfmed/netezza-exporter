@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, progress %}
+{% block content %}
+<section class="head">
+  <div><h1>{{ t.table_config_id }}</h1><small class="muted">{{ t.source_table }} · <code>{{ t.procedure_name }}</code> · config v{{ t.config_version }}</small></div>
+  <div class="actions">
+    <a class="btn ghost" href="{{ url_for('admin_table_form', table_config_id=t.table_config_id) }}">Editar tabela</a>
+    {% if t.gap_count %}
+    <form method="post" action="{{ url_for('request_from_gaps') }}"><input type="hidden" name="table_ids" value="{{ t.table_config_id }}">
+      <button class="btn">Criar pedido para as {{ t.gap_count }} lacuna(s)</button></form>
+    {% endif %}
+  </div>
+</section>
+<div class="card">
+  <dl class="kv">
+    <dt>Status</dt><dd>{{ badge(t.coverage_status) }}</dd>
+    <dt>Escopo</dt><dd>{% if t.migration_start %}{{ t.migration_start|dt }} → {{ t.migration_end|dt }} ({{ t.scope_days }} dias){% else %}não definido{% endif %}</dd>
+    <dt>Migrado</dt><dd>{{ t.done_days }} dias{% if t.scope_days %} ({{ t.done_days|pct(t.scope_days) }}%){% endif %}</dd>
+    <dt>Em execução/pendente</dt><dd>{{ t.inflight_days }} dias · {{ t.running }} subbloco(s) executando, {{ t.pending }} pendente(s)</dd>
+    <dt>Exportado fora do escopo</dt><dd>{{ t.done_outside_days }} dias</dd>
+  </dl>
+  {% if t.scope_days %}{{ progress(t.done_days, t.scope_days, t.failed_days + t.unknown_days, t.inflight_days) }}{% endif %}
+</div>
+<div class="cols3">
+  {% for kind, title, cls in [('missing', 'Lacunas (sem pedido)', 'warn-text'), ('failed', 'Falha definitiva', 'bad-text'), ('unknown', 'Estado desconhecido', 'warn-text')] %}
+  <div class="card"><h3>{{ title }}</h3>
+    <table class="grid compact"><thead><tr><th>data_ini</th><th>data_fim</th><th>Dias</th></tr></thead><tbody>
+    {% for r in ranges[kind] %}<tr><td>{{ r.data_ini|dt }}</td><td>{{ r.data_fim|dt }}</td><td class="{{ cls }}">{{ r.days }}</td></tr>
+    {% else %}<tr><td colspan="3" class="empty">Nenhum.</td></tr>{% endfor %}
+    </tbody></table>
+    {% if kind == 'unknown' and ranges[kind] %}<p class="hint">Reconcilie esses subblocos na tela do pedido: confirme no Netezza se a procedure terminou.</p>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+<div class="card"><h2>Pedidos com esta tabela</h2>
+<table class="grid compact"><thead><tr><th>Pedido</th><th>Status</th><th>Período</th><th>Enviado</th></tr></thead><tbody>
+{% for r in reqs %}<tr><td><a href="{{ url_for('request_detail', request_id=r.request_id) }}">{{ r.request_name }}</a>{% if r.is_reprocess %} <span class="badge s-stopping">reproc.</span>{% endif %}</td>
+  <td>{{ badge(r.status) }}</td><td>{{ r.period_start|dt }} → {{ r.period_end|dt }}</td><td>{{ r.submitted_at|dt }}</td></tr>
+{% else %}<tr><td colspan="4" class="empty">Nenhum pedido.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

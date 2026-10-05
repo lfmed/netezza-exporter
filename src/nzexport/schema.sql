@@ -36,14 +36,26 @@ CREATE TABLE IF NOT EXISTS table_config_version (
   call_timeout_min int  NOT NULL DEFAULT 240 CHECK (call_timeout_min > 0),
   max_retries      int  NOT NULL DEFAULT 2 CHECK (max_retries >= 0),
   retry_unknown    boolean NOT NULL DEFAULT false,  -- só se a procedure for idempotente
-  expected_periodicity_unit text CHECK (expected_periodicity_unit IN ('DAY','WEEK','MONTH','YEAR')),
-  expected_periodicity_size int CHECK (expected_periodicity_size > 0),
-  periodicity_tolerance_days int NOT NULL DEFAULT 0,
+  migration_start  date,               -- escopo da migração: primeiro dia de dados no Netezza
+  migration_end    date,               -- último dia de dados a migrar (inclusivo)
   description      text,
   created_by       text,
   created_at       timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (table_config_id, config_version)
 );
+
+DROP VIEW IF EXISTS v_table_load_status;
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS migration_start date;
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS migration_end date;
+ALTER TABLE table_config_version DROP COLUMN IF EXISTS expected_periodicity_unit;
+ALTER TABLE table_config_version DROP COLUMN IF EXISTS expected_periodicity_size;
+ALTER TABLE table_config_version DROP COLUMN IF EXISTS periodicity_tolerance_days;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'table_config_version_scope_chk') THEN
+    ALTER TABLE table_config_version ADD CONSTRAINT table_config_version_scope_chk
+      CHECK (migration_start IS NULL OR migration_end IS NULL OR migration_start <= migration_end);
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS export_request (
   request_id       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -192,72 +204,66 @@ FROM export_request_table rt
 LEFT JOIN export_subblock s ON s.request_table_id = rt.request_table_id
 GROUP BY rt.request_table_id;
 
--- Saúde da carga por tabela: último período exportado x periodicidade esperada
-DROP VIEW IF EXISTS v_table_load_status;
-CREATE VIEW v_table_load_status AS
+-- Dias contidos num multirange de datas
+CREATE OR REPLACE FUNCTION mr_days(m datemultirange) RETURNS int LANGUAGE sql IMMUTABLE AS $$
+  SELECT coalesce(sum(upper(r) - lower(r)), 0)::int FROM unnest(coalesce(m, '{}'::datemultirange)) r
+$$;
+
+-- Completude da migração por tabela: escopo x períodos concluídos, em execução e com problema
+DROP VIEW IF EXISTS v_migration_coverage;
+CREATE VIEW v_migration_coverage AS
 WITH cur AS (
-  SELECT tc.source_id, tc.active, v.*
+  SELECT tc.source_id, tc.active, v.*,
+         CASE WHEN v.migration_start IS NOT NULL AND v.migration_end IS NOT NULL
+              THEN datemultirange(daterange(v.migration_start, v.migration_end, '[]')) END AS scope
   FROM table_config tc
-  JOIN table_config_version v ON v.table_config_id = tc.table_config_id
-                             AND v.config_version = tc.current_version
-), agg AS (
+  JOIN table_config_version v ON v.table_config_id = tc.table_config_id AND v.config_version = tc.current_version
+), mr AS (
   SELECT s.table_config_id,
-         min(lower(s.data_range)) FILTER (WHERE s.status = 'DONE')      AS first_exported_date,
-         max(upper(s.data_range)) FILTER (WHERE s.status = 'DONE') - 1  AS last_exported_date,
-         max(s.finished_at) FILTER (WHERE s.status = 'DONE')            AS last_success_at,
-         count(*) FILTER (WHERE s.status = 'RUNNING')                   AS running,
-         count(*) FILTER (WHERE s.status = 'PENDING')                   AS pending,
-         count(*) FILTER (WHERE s.status = 'UNKNOWN')                   AS unknown,
-         count(*) FILTER (WHERE s.status = 'FAILED')                    AS failed
+         range_agg(s.data_range) FILTER (WHERE s.status = 'DONE')                         AS done_mr,
+         range_agg(s.data_range) FILTER (WHERE s.status IN ('PENDING','RUNNING'))          AS inflight_mr,
+         range_agg(s.data_range) FILTER (WHERE s.status = 'UNKNOWN')                       AS unknown_mr,
+         range_agg(s.data_range) FILTER (WHERE s.status IN ('PENDING','RUNNING','DONE','UNKNOWN')) AS live_mr,
+         range_agg(s.data_range) FILTER (WHERE s.status = 'FAILED')                        AS failed_mr,
+         count(*) FILTER (WHERE s.status = 'RUNNING')  AS running,
+         count(*) FILTER (WHERE s.status = 'PENDING')  AS pending,
+         max(s.finished_at) FILTER (WHERE s.status = 'DONE') AS last_success_at
   FROM export_subblock s GROUP BY s.table_config_id
-), fails AS (
-  SELECT s.table_config_id, count(*) AS failed_attempts_7d
-  FROM export_attempt a JOIN export_subblock s USING (subblock_id)
-  WHERE a.status IN ('FAILED','UNKNOWN') AND a.started_at > now() - interval '7 days'
-  GROUP BY s.table_config_id
-), gaps AS (
-  -- buracos entre o primeiro e o último dia exportado
-  SELECT table_config_id, count(*) AS gap_count FROM (
-    SELECT table_config_id, lower(data_range) AS lo,
-           lag(upper(data_range)) OVER (PARTITION BY table_config_id ORDER BY lower(data_range)) AS prev_hi
-    FROM export_subblock WHERE status = 'DONE') x
-  WHERE prev_hi IS NOT NULL AND lo > prev_hi GROUP BY table_config_id
-), last_req AS (
-  SELECT DISTINCT ON (rt.table_config_id) rt.table_config_id, r.request_id, r.status AS last_request_status,
-         r.submitted_at AS last_request_at
-  FROM export_request_table rt JOIN export_request r USING (request_id)
-  ORDER BY rt.table_config_id, r.submitted_at DESC
+), x AS (
+  SELECT c.table_config_id, c.source_id, c.active, c.source_table, c.procedure_name, c.config_version,
+         c.migration_start, c.migration_end, c.scope,
+         coalesce(m.done_mr, '{}')     AS done_mr,
+         coalesce(m.inflight_mr, '{}') AS inflight_mr,
+         coalesce(m.unknown_mr, '{}')  AS unknown_mr,
+         -- falhas ainda não cobertas por outro subbloco vivo
+         coalesce(m.failed_mr, '{}') - coalesce(m.live_mr, '{}') AS failed_open_mr,
+         -- lacunas: parte do escopo sem nenhum subbloco vivo (nunca pedida, cancelada ou falha)
+         CASE WHEN c.scope IS NOT NULL THEN c.scope - coalesce(m.live_mr, '{}') END AS missing_mr,
+         CASE WHEN c.scope IS NOT NULL THEN coalesce(m.done_mr, '{}') - c.scope END AS done_outside_mr,
+         coalesce(m.running, 0) AS running, coalesce(m.pending, 0) AS pending, m.last_success_at
+  FROM cur c LEFT JOIN mr m ON m.table_config_id = c.table_config_id
 )
-SELECT c.table_config_id, c.source_id, c.active, c.source_table, c.procedure_name, c.config_version,
-       c.expected_periodicity_unit, c.expected_periodicity_size, c.periodicity_tolerance_days,
-       a.first_exported_date, a.last_exported_date, a.last_success_at,
-       coalesce(a.running, 0) AS running, coalesce(a.pending, 0) AS pending,
-       coalesce(a.unknown, 0) AS unknown, coalesce(a.failed, 0) AS failed,
-       coalesce(f.failed_attempts_7d, 0) AS failed_attempts_7d,
-       coalesce(g.gap_count, 0) AS gap_count,
-       lr.request_id AS last_request_id, lr.last_request_status, lr.last_request_at,
-       (a.last_exported_date + 1) AS next_expected_start,
-       CASE WHEN c.expected_periodicity_unit IS NULL THEN NULL
-            ELSE (a.last_exported_date + 1
-                  + make_interval(days   => CASE c.expected_periodicity_unit WHEN 'DAY'  THEN c.expected_periodicity_size WHEN 'WEEK' THEN 7 * c.expected_periodicity_size ELSE 0 END,
-                                  months => CASE c.expected_periodicity_unit WHEN 'MONTH' THEN c.expected_periodicity_size WHEN 'YEAR' THEN 12 * c.expected_periodicity_size ELSE 0 END))::date - 1
-       END AS next_expected_end,
+SELECT x.table_config_id, x.source_id, x.active, x.source_table, x.procedure_name, x.config_version,
+       x.migration_start, x.migration_end, x.running, x.pending, x.last_success_at,
+       mr_days(x.scope)                              AS scope_days,
+       mr_days(x.done_mr * coalesce(x.scope, x.done_mr)) AS done_days,
+       mr_days(x.inflight_mr * coalesce(x.scope, x.inflight_mr)) AS inflight_days,
+       mr_days(x.unknown_mr * coalesce(x.scope, x.unknown_mr))  AS unknown_days,
+       mr_days(x.failed_open_mr * coalesce(x.scope, x.failed_open_mr)) AS failed_days,
+       mr_days(x.missing_mr)                         AS missing_days,
+       mr_days(x.done_outside_mr)                    AS done_outside_days,
+       (SELECT count(*) FROM unnest(x.missing_mr))   AS gap_count,
+       x.missing_mr::text AS missing_ranges,
+       x.failed_open_mr::text AS failed_ranges,
+       x.unknown_mr::text AS unknown_ranges,
        CASE
-         WHEN NOT c.active THEN 'INATIVA'
-         WHEN coalesce(a.unknown, 0) > 0 THEN 'ESTADO_DESCONHECIDO'
-         WHEN coalesce(f.failed_attempts_7d, 0) >= 3 THEN 'FALHAS_RECORRENTES'
-         WHEN a.last_exported_date IS NULL THEN 'SEM_CARGA'
-         WHEN c.expected_periodicity_unit IS NULL THEN 'SEM_PERIODICIDADE'
-         -- atrasada quando o próximo período esperado já terminou (+ tolerância) e não foi exportado
-         WHEN (a.last_exported_date + 1
-               + make_interval(days   => CASE c.expected_periodicity_unit WHEN 'DAY'  THEN c.expected_periodicity_size WHEN 'WEEK' THEN 7 * c.expected_periodicity_size ELSE 0 END,
-                               months => CASE c.expected_periodicity_unit WHEN 'MONTH' THEN c.expected_periodicity_size WHEN 'YEAR' THEN 12 * c.expected_periodicity_size ELSE 0 END)
-               + make_interval(days => c.periodicity_tolerance_days))::date <= current_date
-           THEN 'ATRASADA'
-         ELSE 'EM_DIA'
-       END AS load_health
-FROM cur c
-LEFT JOIN agg a ON a.table_config_id = c.table_config_id
-LEFT JOIN fails f ON f.table_config_id = c.table_config_id
-LEFT JOIN gaps g ON g.table_config_id = c.table_config_id
-LEFT JOIN last_req lr ON lr.table_config_id = c.table_config_id;
+         WHEN NOT x.active THEN 'INATIVA'
+         WHEN x.scope IS NULL THEN 'SEM_ESCOPO'
+         WHEN mr_days(x.unknown_mr * x.scope) > 0 THEN 'ESTADO_DESCONHECIDO'
+         WHEN mr_days(x.done_mr * x.scope) = mr_days(x.scope) THEN 'COMPLETA'
+         WHEN x.running + x.pending > 0 THEN 'EM_ANDAMENTO'
+         WHEN mr_days(x.failed_open_mr * x.scope) > 0 THEN 'COM_FALHAS'
+         WHEN mr_days(x.done_mr * x.scope) = 0 THEN 'NAO_INICIADA'
+         ELSE 'INCOMPLETA'
+       END AS coverage_status
+FROM x;
