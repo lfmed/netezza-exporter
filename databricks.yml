@@ -1,0 +1,110 @@
+bundle:
+  name: netezza-exporter
+
+variables:
+  lakebase_project:
+    default: netezza-exporter
+  lakebase_endpoint:
+    default: projects/netezza-exporter/branches/production/endpoints/primary
+  app_sp_client_id:
+    description: client id do service principal do app (recebe GRANT no schema nzexport)
+    default: "88d6e7b2-9da3-4ca1-890e-fab9e0eb9604"
+
+sync:
+  exclude:
+    - .venv
+    - "**/__pycache__"
+    - tests
+    - "*.md"
+    - .claude-sessions.log
+
+resources:
+  jobs:
+    nzexport_dispatcher:
+      name: nzexport-dispatcher
+      description: Drena a fila de subblocos e chama a procedure Netezza (tabela, data_ini, data_fim).
+      max_concurrent_runs: 1
+      queue:
+        enabled: true
+      parameters:
+        - name: lakebase_endpoint
+          default: ${var.lakebase_endpoint}
+        - name: grant_role
+          default: ${var.app_sp_client_id}
+        - name: idle_exit_s
+          default: "120"
+        - name: max_runtime_min
+          default: "720"
+      tasks:
+        - task_key: dispatcher
+          environment_key: default
+          spark_python_task:
+            python_file: ./src/run_dispatcher.py
+            parameters:
+              - --endpoint
+              - "{{job.parameters.lakebase_endpoint}}"
+              - --run-id
+              - "{{job.run_id}}"
+              - --job-id
+              - "{{job.id}}"
+              - --idle-exit-s
+              - "{{job.parameters.idle_exit_s}}"
+              - --max-runtime-min
+              - "{{job.parameters.max_runtime_min}}"
+              - --grant-role
+              - "{{job.parameters.grant_role}}"
+          timeout_seconds: 0
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "3"
+            dependencies:
+              - nzpy>=1.15
+              - psycopg[binary]>=3.2
+              - psycopg-pool>=3.2
+              - databricks-sdk>=0.81
+
+    nzexport_hook_example:
+      name: nzexport-hook-example
+      description: Exemplo de job acionado pelo hook pós-exportação (substituir pela importação para Delta).
+      parameters:
+        - { name: request_id, default: "" }
+        - { name: trigger_level, default: "" }
+        - { name: request_table_id, default: "" }
+        - { name: table_config_id, default: "" }
+        - { name: data_ini, default: "" }
+        - { name: data_fim, default: "" }
+      tasks:
+        - task_key: hook
+          environment_key: default
+          spark_python_task:
+            python_file: ./src/hook_example.py
+            parameters: ["--request_id", "{{job.parameters.request_id}}", "--trigger_level", "{{job.parameters.trigger_level}}",
+                         "--request_table_id", "{{job.parameters.request_table_id}}", "--table_config_id", "{{job.parameters.table_config_id}}",
+                         "--data_ini", "{{job.parameters.data_ini}}", "--data_fim", "{{job.parameters.data_fim}}"]
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "3"
+
+  apps:
+    nzexport_app:
+      name: netezza-exporter
+      description: Exportador Netezza — pedidos, subblocos, acompanhamento e periodicidade
+      source_code_path: ./src
+      resources:
+        - name: postgres
+          postgres:
+            branch: projects/${var.lakebase_project}/branches/production
+            database: projects/${var.lakebase_project}/branches/production/databases/databricks-postgres
+            permission: CAN_CONNECT_AND_CREATE
+        - name: dispatcher-job
+          job:
+            id: ${resources.jobs.nzexport_dispatcher.id}
+            permission: CAN_MANAGE_RUN
+
+targets:
+  dev:
+    default: true
+    workspace:
+      host: https://fevm-stable-classic-pg4xe1.cloud.databricks.com

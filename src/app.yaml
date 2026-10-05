@@ -1,0 +1,6 @@
+command: ["gunicorn", "app:app", "-w", "2", "--threads", "8", "-b", "0.0.0.0:8000", "--timeout", "120"]
+env:
+  - name: LAKEBASE_ENDPOINT
+    value: "projects/netezza-exporter/branches/production/endpoints/primary"
+  - name: DISPATCHER_JOB_ID
+    valueFrom: dispatcher-job

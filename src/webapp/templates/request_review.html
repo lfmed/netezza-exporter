@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="head"><h1>Revisão do pedido</h1></section>
+<div class="card">
+  <dl class="kv">
+    <dt>Nome</dt><dd>{{ form.name }}</dd>
+    <dt>Chamadas simultâneas (pedido)</dt><dd>{{ max_parallel }}</dd>
+    <dt>Prazo</dt><dd>{{ form.deadline_at or '—' }}</dd>
+    <dt>Total de chamadas</dt><dd><b>{{ rows|map(attribute='blocks')|map('length')|sum }}</b></dd>
+  </dl>
+</div>
+{% for r in rows %}
+{% set c = cfg.get(r.table_config_id) %}
+<div class="card {{ 'conflict' if r.conflicts }}">
+  <h2>{{ loop.index }}. {{ r.table_config_id }} {% if r.is_reprocess %}<span class="badge s-stopping">Reprocessamento</span>{% endif %}</h2>
+  {% if c %}
+  {% set src = sources.get(c.source_id) %}
+  <p class="muted">Procedure <code>{{ c.procedure_name }}('{{ c.source_table }}', data_ini, data_fim)</code> · versão da config {{ c.config_version }} ·
+     até {{ c.max_parallel }} chamada(s) simultânea(s) nesta tabela · origem {{ c.source_id }} (limite global {{ src.max_sessions if src else '?' }}, driver <b>{{ src.driver if src else '?' }}</b>)</p>
+  {% endif %}
+  <p>{{ r.period_start|dt }} → {{ r.period_end|dt }} · subbloco de {{ r.subblock_size }} {{ UNIT_LABEL[r.subblock_unit] }}{% if r.calendar_aligned %} (alinhado ao calendário){% endif %} ·
+     <b>{{ r.blocks|length }} subbloco(s)</b></p>
+  {% if r.conflicts %}
+    <div class="flash error">Conflitos — o pedido não pode ser criado:
+      <ul>{% for x in r.conflicts %}<li>{{ x.reason }}{% if x.request_name %}: pedido <a href="{{ url_for('request_detail', request_id=x.request_id) }}">{{ x.request_name }}</a>, {{ x.data_ini|dt }} → {{ x.data_fim|dt }}{% endif %}</li>{% endfor %}</ul>
+      {% if not r.is_reprocess %}Para exportar de novo um período já concluído, marque <b>Reprocessar</b> e informe a justificativa.{% endif %}
+    </div>
+  {% endif %}
+  {% if r.superseded %}
+    <div class="flash warn">{{ r.superseded|length }} subbloco(s) já concluído(s) serão marcados como <b>Substituído</b> por este reprocessamento.</div>
+  {% endif %}
+  {% if r.blocks %}
+  <details {{ 'open' if r.blocks|length <= 24 }}><summary>Ver subblocos</summary>
+    <table class="grid compact"><thead><tr><th>#</th><th>data_ini</th><th>data_fim (inclusiva)</th><th>Chamada</th></tr></thead><tbody>
+    {% for b in r.blocks[:500] %}<tr><td>{{ b.seq }}</td><td>{{ b.start }}</td><td>{{ b.end }}</td>
+      <td><code>{{ c.procedure_name if c }}('{{ c.source_table if c }}', '{{ b.start }}', '{{ b.end }}')</code></td></tr>{% endfor %}
+    {% if r.blocks|length > 500 %}<tr><td colspan="4" class="muted">… mais {{ r.blocks|length - 500 }}</td></tr>{% endif %}
+    </tbody></table>
+  </details>
+  {% endif %}
+</div>
+{% endfor %}
+
+<form method="post" action="{{ url_for('request_create') }}" class="actions end">
+  {% for k in ['name', 'max_parallel', 'deadline_at', 'notes'] %}<input type="hidden" name="{{ k }}" value="{{ form.get(k, '') }}">{% endfor %}
+  {% for k in ['table', 'start', 'end', 'size', 'unit', 'aligned', 'reprocess', 'reason'] %}
+    {% for v in form.getlist(k) %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+  {% endfor %}
+  <a class="btn ghost" href="javascript:history.back()">Voltar e editar</a>
+  <label class="check"><input type="checkbox" required> Confirmo que o pedido pode gerar grande volume de dados no destino</label>
+  <button class="btn" {{ 'disabled' if has_conflicts }}>Criar pedido e executar</button>
+</form>
+{% endblock %}

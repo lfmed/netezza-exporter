@@ -1,0 +1,20 @@
+{% from "_macros.html" import badge, progress %}
+<table class="grid">
+  <thead><tr><th>Pedido</th><th>Status</th><th>Tabelas</th><th>Progresso</th><th>Paralelismo</th><th>Solicitante</th><th>Enviado</th><th>Duração</th></tr></thead>
+  <tbody>
+  {% for r in (requests if requests is defined else active) %}
+    <tr>
+      <td><a href="{{ url_for('request_detail', request_id=r.request_id) }}"><b>{{ r.request_name }}</b></a></td>
+      <td>{{ badge(r.status) }}{% if r.status_reason %}<br><small class="muted">{{ r.status_reason }}</small>{% endif %}</td>
+      <td><small>{{ r.tables }}</small></td>
+      <td style="min-width:180px">{{ progress(r.done or 0, r.total or 0, (r.failed or 0) + (r.unknown or 0), r.running or 0) }}</td>
+      <td>{{ r.max_parallel }}</td>
+      <td><small>{{ r.requested_by }}</small></td>
+      <td><small>{{ r.submitted_at|dt }}</small></td>
+      <td><small>{{ r.started_at|dur(r.finished_at) }}</small></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="empty">Nenhum pedido.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block content %}
+<section class="head">
+  <div><h1>Subbloco {{ sb.table_config_id }} #{{ sb.seq }}</h1>
+  <small class="muted">pedido <a href="{{ url_for('request_detail', request_id=sb.request_id) }}">{{ sb.request_name }}</a></small></div>
+</section>
+<div class="cols">
+<div class="card"><dl class="kv">
+  <dt>Status</dt><dd>{{ badge(sb.status) }}</dd>
+  <dt>data_ini</dt><dd>{{ sb.data_ini }}</dd><dt>data_fim (inclusiva)</dt><dd>{{ sb.data_fim }}</dd>
+  <dt>Tentativas</dt><dd>{{ sb.attempts }}</dd>
+  <dt>Lease</dt><dd>{{ sb.lease_owner or '—' }} {% if sb.lease_expires_at %}até {{ sb.lease_expires_at|dt }}{% endif %}</dd>
+  <dt>Último erro</dt><dd><small class="bad-text">{{ sb.last_error or '—' }}</small></dd>
+</dl></div>
+<div class="card">
+  {% if sb.status == 'UNKNOWN' %}
+  <h3>Reconciliação manual</h3>
+  <p class="hint">A chamada foi enviada ao Netezza mas a conexão caiu ou o worker parou antes da resposta. Verifique no Netezza/destino se a procedure terminou e registre a evidência.</p>
+  <form method="post" action="{{ url_for('subblock_resolve', subblock_id=sb.subblock_id) }}">
+    <label>Evidência/justificativa<input name="reason" required></label>
+    <div class="actions">
+      <button class="btn" name="done" value="1">Confirmar como concluído</button>
+      <button class="btn ghost danger" name="done" value="0">Marcar como falho</button>
+    </div>
+  </form>
+  <form method="post" action="{{ url_for('subblock_retry', subblock_id=sb.subblock_id) }}" onsubmit="return confirm('Reexecutar a procedure para este subbloco? Só é seguro se a procedure for idempotente.')">
+    <button class="btn ghost">Reexecutar</button></form>
+  {% elif sb.status in ('FAILED', 'CANCELED') %}
+  <form method="post" action="{{ url_for('subblock_retry', subblock_id=sb.subblock_id) }}"><button class="btn">Repetir subbloco</button></form>
+  {% else %}<p class="muted">Sem ações disponíveis neste estado.</p>{% endif %}
+</div>
+</div>
+<div class="card"><h2>Tentativas</h2>
+<table class="grid compact"><thead><tr><th>#</th><th>Status</th><th>Run</th><th>Chamada</th><th>Início</th><th>Duração</th><th>Erro</th></tr></thead><tbody>
+{% for a in attempts %}<tr><td>{{ a.attempt_no }}</td><td>{{ badge(a.status) }}</td><td>{{ a.databricks_run_id }}</td>
+  <td><code>{{ a.call_statement }}</code></td><td class="nowrap">{{ a.started_at|dt }}</td><td>{{ a.started_at|dur(a.finished_at) }}</td>
+  <td><small class="bad-text">{% if a.error_class %}[{{ a.error_class }}] {% endif %}{{ a.error_message or '' }}</small></td></tr>
+{% else %}<tr><td colspan="7" class="empty">Nenhuma tentativa.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% macro badge(status) -%}
+<span class="badge s-{{ status|lower }}">{{ STATUS_LABEL.get(status, status) }}</span>
+{%- endmacro %}
+
+{% macro progress(done, total, failed=0, running=0) -%}
+<div class="bar" title="{{ done }}/{{ total }}">
+  <span class="ok" style="width: {{ done|pct(total) }}%"></span>
+  <span class="run" style="width: {{ running|pct(total) }}%"></span>
+  <span class="bad" style="width: {{ failed|pct(total) }}%"></span>
+</div>
+<small class="muted">{{ done }}/{{ total }} subblocos ({{ done|pct(total) }}%)</small>
+{%- endmacro %}

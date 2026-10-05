@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, progress %}
+{% block content %}
+<section class="head">
+  <h1>Painel de cargas</h1>
+  <div class="actions">
+    {% if dispatcher %}
+      <span class="pill live">● Dispatcher ativo · run {{ dispatcher.run_id }} · {{ dispatcher.in_flight }} chamada(s) em curso · heartbeat {{ dispatcher.heartbeat_at|dt }}</span>
+      <form method="post" action="{{ url_for('dispatcher_cancel') }}" onsubmit="return confirm('Cancelar o run do dispatcher? Chamadas em curso no Netezza continuam e ficarão como Desconhecido.')">
+        <button class="btn ghost danger">Interromper dispatcher</button></form>
+    {% else %}
+      <span class="pill idle">○ Dispatcher parado</span>
+      <form method="post" action="{{ url_for('dispatcher_start') }}"><button class="btn ghost">Disparar dispatcher</button></form>
+    {% endif %}
+  </div>
+</section>
+
+<div class="card">
+  <h2>Periodicidade e duplicidade por tabela</h2>
+  <div class="filters">
+    <input type="search" placeholder="Filtrar tabela…" data-filter="#tbl-health">
+    <select data-filter-col="#tbl-health" data-col="health">
+      <option value="">Todos os status</option>
+      {% for s in ['EM_DIA','ATRASADA','SEM_CARGA','SEM_PERIODICIDADE','ESTADO_DESCONHECIDO','FALHAS_RECORRENTES','INATIVA'] %}
+      <option value="{{ s }}">{{ STATUS_LABEL[s] }}</option>{% endfor %}
+    </select>
+  </div>
+  <table class="grid" id="tbl-health">
+    <thead><tr>
+      <th>Tabela</th><th>Saúde</th><th>Periodicidade</th><th>Exportado de</th><th>Até</th>
+      <th>Próximo esperado</th><th>Lacunas</th><th>Em execução</th><th>Pendentes</th>
+      <th>Falhas 7d</th><th>Último pedido</th>
+    </tr></thead>
+    <tbody>
+    {% for t in tables %}
+      <tr data-health="{{ t.load_health }}">
+        <td><a href="{{ url_for('admin_table_form', table_config_id=t.table_config_id) }}"><b>{{ t.table_config_id }}</b></a><br><small class="muted">{{ t.source_table }}</small></td>
+        <td>{{ badge(t.load_health) }}{% if t.unknown %}<br><small class="warn-text">{{ t.unknown }} desconhecido(s)</small>{% endif %}</td>
+        <td>{% if t.expected_periodicity_unit %}{{ t.expected_periodicity_size }} {{ UNIT_LABEL[t.expected_periodicity_unit] }}<br><small class="muted">tolerância {{ t.periodicity_tolerance_days }}d</small>{% else %}—{% endif %}</td>
+        <td>{{ t.first_exported_date|dt }}</td>
+        <td>{{ t.last_exported_date|dt }}</td>
+        <td>{% if t.next_expected_start %}{{ t.next_expected_start|dt }}{% if t.next_expected_end %} → {{ t.next_expected_end|dt }}{% endif %}{% else %}—{% endif %}</td>
+        <td>{% if t.gap_count %}<span class="warn-text">{{ t.gap_count }}</span>{% else %}0{% endif %}</td>
+        <td>{{ t.running }}</td><td>{{ t.pending }}</td>
+        <td>{% if t.failed_attempts_7d %}<span class="bad-text">{{ t.failed_attempts_7d }}</span>{% else %}0{% endif %}</td>
+        <td>{% if t.last_request_id %}<a href="{{ url_for('request_detail', request_id=t.last_request_id) }}">{{ badge(t.last_request_status) }}</a><br><small class="muted">{{ t.last_request_at|dt }}</small>{% else %}—{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="11" class="empty">Nenhuma tabela cadastrada. <a href="{{ url_for('admin_table_form') }}">Cadastrar</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Períodos já exportados ficam reservados: um novo pedido com interseção é bloqueado, a menos que seja marcado como <b>reprocessamento</b> com justificativa.</p>
+</div>
+
+<div class="card">
+  <h2>Pedidos recentes</h2>
+  {% include "_requests_table.html" %}
+</div>
+
+<div class="card">
+  <h2>Execuções do dispatcher</h2>
+  <table class="grid compact"><thead><tr><th>Run</th><th>Início</th><th>Heartbeat</th><th>Fim</th><th>Status</th></tr></thead>
+  <tbody>{% for r in runs %}<tr><td>{{ r.run_id }}</td><td>{{ r.started_at|dt }}</td><td>{{ r.heartbeat_at|dt }}</td><td>{{ r.finished_at|dt }}</td><td>{{ r.status }}</td></tr>
+  {% else %}<tr><td colspan="5" class="empty">Nenhuma execução.</td></tr>{% endfor %}</tbody></table>
+</div>
+{% endblock %}

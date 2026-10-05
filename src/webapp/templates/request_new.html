@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="head"><h1>Novo pedido de exportação</h1></section>
+<form method="post" action="{{ url_for('request_review') }}" id="req-form">
+<div class="card">
+  <div class="row">
+    <label class="grow">Nome do pedido<input name="name" required value="{{ form.name if form else '' }}" placeholder="ex.: Carga histórica 2023 — vendas"></label>
+    <label>Chamadas simultâneas (pedido)
+      <input type="number" name="max_parallel" min="1" max="200" required value="{{ form.max_parallel if form else 2 }}">
+    </label>
+    <label>Prazo/janela (opcional)<input type="datetime-local" name="deadline_at" value="{{ form.deadline_at if form else '' }}"></label>
+  </div>
+  <label>Observações<textarea name="notes" rows="2">{{ form.notes if form else '' }}</textarea></label>
+  <p class="hint">O número de chamadas simultâneas do pedido é limitado também pelo máximo por tabela e pelo limite global da origem Netezza (Administração). O menor dos três vale.</p>
+</div>
+
+<div class="card">
+  <h2>Tabelas</h2>
+  <p class="hint">Cada subbloco gera <b>uma chamada</b> da procedure: <code>procedure(tabela, data_ini, data_fim)</code>, com <b>data_fim inclusiva</b>.</p>
+  <table class="grid form-grid" id="rows">
+    <thead><tr><th>Tabela</th><th>Data inicial</th><th>Data final (inclusiva)</th><th>Subbloco</th><th>Alinhar ao calendário</th><th>Reprocessar</th><th>Justificativa</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <button type="button" class="btn ghost" id="add-row">+ Adicionar tabela</button>
+</div>
+<div class="actions end"><button class="btn">Revisar plano</button></div>
+</form>
+
+<template id="row-tpl">
+  <tr>
+    <td><select name="table" required class="tbl-select">
+      <option value="">— selecione —</option>
+      {% for t in tables %}<option value="{{ t.table_config_id }}" data-unit="{{ t.default_subblock_unit }}" data-size="{{ t.default_subblock_size }}">{{ t.table_config_id }} ({{ t.source_table }})</option>{% endfor %}
+    </select></td>
+    <td><input type="date" name="start" required></td>
+    <td><input type="date" name="end" required></td>
+    <td class="nowrap"><input type="number" name="size" min="1" value="1" style="width:4.5em">
+      <select name="unit">{% for u in UNITS %}<option value="{{ u }}">{{ UNIT_LABEL[u] }}</option>{% endfor %}</select></td>
+    <td><select name="aligned"><option value="1">Sim</option><option value="0">Não</option></select></td>
+    <td><select name="reprocess"><option value="0">Não</option><option value="1">Sim</option></select></td>
+    <td><input name="reason" placeholder="obrigatória se reprocessar"></td>
+    <td><button type="button" class="btn ghost small rm">✕</button></td>
+  </tr>
+</template>
+{% endblock %}
+{% block scripts %}
+<script>
+  initRequestForm({{ rows | tojson }});
+</script>
+{% endblock %}

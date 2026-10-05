@@ -1,0 +1,53 @@
+{% from "_macros.html" import badge, progress %}
+<div class="card">
+  <div class="split">
+    <h2>Progresso</h2>
+    <small class="muted">{% if dispatcher %}dispatcher ativo · run {{ dispatcher.run_id }}{% else %}dispatcher parado{% endif %} · atualizado {{ now_str if now_str is defined else '' }}</small>
+  </div>
+  {{ progress(totals.done, totals.total - totals.canceled, totals.failed + totals.unknown, totals.running) }}
+  <div class="stats">
+    <span><b>{{ totals.running }}</b> executando</span><span><b>{{ totals.pending }}</b> pendentes</span>
+    <span><b>{{ totals.done }}</b> concluídos</span><span class="bad-text"><b>{{ totals.failed }}</b> falhos</span>
+    <span class="warn-text"><b>{{ totals.unknown }}</b> desconhecidos</span><span class="muted"><b>{{ totals.canceled }}</b> cancelados/substituídos</span>
+  </div>
+  <table class="grid">
+    <thead><tr><th>#</th><th>Tabela</th><th>Período</th><th>Subbloco</th><th>Progresso</th><th>Exec.</th><th>Pend.</th><th>Falhos</th><th>Desc.</th></tr></thead>
+    <tbody>{% for t in tables %}
+      <tr><td>{{ t.ordinal }}</td><td><b>{{ t.table_config_id }}</b> <small class="muted">v{{ t.config_version }}</small>{% if t.is_reprocess %} <span class="badge s-stopping">reproc.</span>{% endif %}</td>
+        <td class="nowrap">{{ t.period_start|dt }} → {{ t.period_end|dt }}</td>
+        <td>{{ t.subblock_size }} {{ UNIT_LABEL[t.subblock_unit] }}</td>
+        <td style="min-width:200px">{{ progress(t.done, t.total - t.canceled, t.failed + t.unknown, t.running) }}</td>
+        <td>{{ t.running }}</td><td>{{ t.pending }}</td><td>{{ t.failed }}</td><td>{{ t.unknown }}</td></tr>
+    {% endfor %}</tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="split">
+    <h2>Subblocos</h2>
+    <form method="get" class="inline">
+      <select name="sb_status" onchange="this.form.submit()">
+        <option value="">Todos</option>
+        {% for s in ['RUNNING','PENDING','FAILED','UNKNOWN','DONE','CANCELED','SUPERSEDED'] %}
+        <option value="{{ s }}" {{ 'selected' if sb_status == s }}>{{ STATUS_LABEL[s] }}</option>{% endfor %}
+      </select>
+    </form>
+  </div>
+  <table class="grid compact">
+    <thead><tr><th>Tabela</th><th>#</th><th>data_ini</th><th>data_fim</th><th>Status</th><th>Tent.</th><th>Início</th><th>Duração</th><th>Próx. tentativa</th><th>Erro</th><th></th></tr></thead>
+    <tbody>{% for s in subblocks %}
+      <tr class="{{ 'hl' if s.status == 'RUNNING' }}">
+        <td>{{ s.table_config_id }}</td><td>{{ s.seq }}</td><td class="nowrap">{{ s.data_ini }}</td><td class="nowrap">{{ s.data_fim }}</td>
+        <td>{{ badge(s.status) }}</td><td>{{ s.attempts }}</td>
+        <td class="nowrap"><small>{{ s.started_at|dt }}</small></td>
+        <td><small>{{ s.started_at|dur(s.finished_at) if s.started_at else '—' }}</small></td>
+        <td><small>{{ s.next_attempt_at|dt }}</small></td>
+        <td><small class="bad-text">{{ (s.last_error or '')[:140] }}</small></td>
+        <td class="nowrap"><a href="{{ url_for('subblock_detail', subblock_id=s.subblock_id) }}">detalhes</a>
+          {% if s.status in ('FAILED', 'CANCELED') %}
+          <form method="post" action="{{ url_for('subblock_retry', subblock_id=s.subblock_id) }}" class="inline"><button class="btn ghost small">repetir</button></form>
+          {% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="11" class="empty">Nenhum subbloco.</td></tr>{% endfor %}</tbody>
+  </table>
+</div>

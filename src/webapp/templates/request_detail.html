@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block content %}
+<section class="head">
+  <div>
+    <h1>{{ req.request_name }}</h1>
+    <small class="muted">{{ req.request_id }} · por {{ req.requested_by }} · enviado {{ req.submitted_at|dt }}</small>
+  </div>
+  <div class="actions">
+    {% if req.status in ('SUBMITTED', 'RUNNING') %}
+      <form method="post" action="{{ url_for('request_stop', request_id=req.request_id) }}"><button class="btn ghost">Parar</button></form>
+    {% endif %}
+    {% if req.status in ('STOPPED', 'STOPPING', 'FAILED') %}
+      <form method="post" action="{{ url_for('request_resume', request_id=req.request_id) }}" class="inline">
+        <label class="check"><input type="checkbox" name="retry_failed" value="1" checked> repetir falhos</label>
+        <label class="check" title="Só marque se tiver certeza de que a procedure é idempotente ou de que a chamada anterior não concluiu"><input type="checkbox" name="retry_unknown" value="1"> repetir desconhecidos</label>
+        <button class="btn">Retomar</button>
+      </form>
+    {% endif %}
+    {% if req.status not in ('COMPLETED', 'CANCELED') %}
+      <form method="post" action="{{ url_for('request_cancel', request_id=req.request_id) }}"
+            onsubmit="return confirm('Encerrar o pedido? Subblocos pendentes serão cancelados e o período liberado para outro pedido.')">
+        <button class="btn ghost danger">Encerrar</button></form>
+    {% endif %}
+  </div>
+</section>
+
+<div class="cols">
+  <div class="card">
+    <dl class="kv">
+      <dt>Status</dt><dd>{{ badge(req.status) }} {% if req.status_reason %}<small class="muted">{{ req.status_reason }}</small>{% endif %}</dd>
+      <dt>Início</dt><dd>{{ req.started_at|dt }}</dd>
+      <dt>Fim</dt><dd>{{ req.finished_at|dt }}</dd>
+      <dt>Duração</dt><dd>{{ req.started_at|dur(req.finished_at) }}</dd>
+      <dt>Prazo/janela</dt><dd>{{ req.deadline_at|dt }}</dd>
+      {% if req.stop_requested_at %}<dt>Parada solicitada</dt><dd>{{ req.stop_requested_at|dt }} por {{ req.stop_requested_by }}</dd>{% endif %}
+      {% if req.notes %}<dt>Observações</dt><dd>{{ req.notes }}</dd>{% endif %}
+    </dl>
+  </div>
+  <div class="card">
+    <h3>Chamadas simultâneas deste pedido</h3>
+    <form method="post" action="{{ url_for('request_parallelism', request_id=req.request_id) }}" class="inline">
+      <input type="number" name="max_parallel" min="1" max="200" value="{{ req.max_parallel }}" style="width:6em">
+      <button class="btn ghost">Aplicar</button>
+    </form>
+    <p class="hint">Pode ser alterado com o pedido em execução. Também valem o limite por tabela e o limite global da origem.</p>
+  </div>
+</div>
+
+<div id="progress" data-src="{{ url_for('request_partial', request_id=req.request_id, sb_status=sb_status) }}"
+     data-live="{{ '1' if req.status in ('SUBMITTED','RUNNING','STOPPING') else '0' }}">
+  {% include "_request_progress.html" %}
+</div>
+
+<div class="card">
+  <h2>Eventos</h2>
+  <table class="grid compact"><thead><tr><th>Quando</th><th>Evento</th><th>Ator</th><th>Detalhes</th></tr></thead><tbody>
+  {% for e in events %}<tr><td class="nowrap">{{ e.event_time|dt }}</td><td>{{ e.event_type }}</td><td><small>{{ e.actor }}</small></td>
+    <td><small class="mono">{{ e.details|tojson if e.details else '' }}</small></td></tr>
+  {% else %}<tr><td colspan="4" class="empty">Sem eventos.</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% endblock %}

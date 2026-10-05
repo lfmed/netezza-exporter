@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="head"><h1>{{ 'Tabela ' ~ t.table_config_id if t else 'Nova tabela' }}</h1></section>
+<form method="post" action="{{ url_for('admin_table_save') }}" class="card">
+  <p class="hint">Salvar cria uma <b>nova versão</b> da configuração. Pedidos já criados continuam usando a versão com que foram enviados.</p>
+  <div class="row">
+    <label>Identificador lógico<input name="table_config_id" value="{{ t.table_config_id if t else '' }}" {{ 'readonly' if t }} required></label>
+    <label>Origem<select name="source_id">{% for s in sources %}<option {{ 'selected' if t and t.source_id == s.source_id }}>{{ s.source_id }}</option>{% endfor %}</select></label>
+    <label>Ativa<select name="active"><option value="1" {{ 'selected' if not t or t.active }}>Sim</option><option value="0" {{ 'selected' if t and not t.active }}>Não</option></select></label>
+  </div>
+  <div class="row">
+    <label class="grow">Valor do parâmetro <i>tabela</i><input name="source_table" value="{{ t.source_table if t else '' }}" required placeholder="ex.: DW.FATO_VENDAS"></label>
+    <label class="grow">Procedure<input name="procedure_name" value="{{ t.procedure_name if t else '' }}" required placeholder="ex.: ADMIN.SP_EXPORTA_TABELA"
+           pattern="[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2}"></label>
+  </div>
+  <div class="row">
+    <label>Subbloco padrão<span class="nowrap"><input type="number" name="default_subblock_size" min="1" value="{{ t.default_subblock_size if t else 1 }}" style="width:5em">
+      <select name="default_subblock_unit">{% for u in UNITS %}<option value="{{ u }}" {{ 'selected' if (t and t.default_subblock_unit == u) or (not t and u == 'MONTH') }}>{{ UNIT_LABEL[u] }}</option>{% endfor %}</select></span></label>
+    <label>Máx. chamadas simultâneas (tabela)<input type="number" name="max_parallel" min="1" max="200" value="{{ t.max_parallel if t else 2 }}"></label>
+    <label>Timeout da chamada (min)<input type="number" name="call_timeout_min" min="1" value="{{ t.call_timeout_min if t else 240 }}"></label>
+    <label>Retries automáticos<input type="number" name="max_retries" min="0" max="10" value="{{ t.max_retries if t else 2 }}"></label>
+    <label title="Só habilite se a procedure for idempotente por (tabela, data_ini, data_fim)">Repetir resultado desconhecido
+      <select name="retry_unknown"><option value="0">Não</option><option value="1" {{ 'selected' if t and t.retry_unknown }}>Sim</option></select></label>
+  </div>
+  <div class="row">
+    <label>Periodicidade esperada<span class="nowrap"><input type="number" name="expected_periodicity_size" min="1" value="{{ t.expected_periodicity_size if t and t.expected_periodicity_size else 1 }}" style="width:5em">
+      <select name="expected_periodicity_unit"><option value="">(nenhuma)</option>{% for u in UNITS %}<option value="{{ u }}" {{ 'selected' if t and t.expected_periodicity_unit == u }}>{{ UNIT_LABEL[u] }}</option>{% endfor %}</select></span></label>
+    <label>Tolerância (dias)<input type="number" name="periodicity_tolerance_days" min="0" value="{{ t.periodicity_tolerance_days if t else 0 }}"></label>
+  </div>
+  <label>Descrição<textarea name="description" rows="2">{{ t.description or '' if t else '' }}</textarea></label>
+  <div class="actions end"><a class="btn ghost" href="{{ url_for('admin') }}">Cancelar</a><button class="btn">Salvar nova versão</button></div>
+</form>
+{% if versions %}
+<div class="card"><h2>Histórico de versões</h2>
+<table class="grid compact"><thead><tr><th>Versão</th><th>Tabela</th><th>Procedure</th><th>Máx. paralelo</th><th>Timeout</th><th>Retries</th><th>Por</th><th>Em</th></tr></thead><tbody>
+{% for v in versions %}<tr><td>v{{ v.config_version }}</td><td>{{ v.source_table }}</td><td>{{ v.procedure_name }}</td><td>{{ v.max_parallel }}</td><td>{{ v.call_timeout_min }}</td><td>{{ v.max_retries }}</td><td><small>{{ v.created_by }}</small></td><td><small>{{ v.created_at|dt }}</small></td></tr>{% endfor %}
+</tbody></table></div>
+{% endif %}
+{% endblock %}

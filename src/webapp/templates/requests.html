@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="head">
+  <h1>Pedidos</h1>
+  <div class="actions">
+    <form method="get"><select name="status" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for s in ['SUBMITTED','RUNNING','STOPPING','STOPPED','FAILED','COMPLETED','CANCELED'] %}
+      <option value="{{ s }}" {{ 'selected' if status == s }}>{{ STATUS_LABEL[s] }}</option>{% endfor %}
+    </select></form>
+    <a class="btn" href="{{ url_for('request_new') }}">Novo pedido</a>
+  </div>
+</section>
+<div class="card">{% include "_requests_table.html" %}</div>
+{% endblock %}
