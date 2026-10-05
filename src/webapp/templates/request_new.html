@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="head"><h1>Novo pedido de exportação</h1></section>
+<section class="head">
+  <div><h1>➕ Novo pedido de exportação</h1><p>Cada subbloco gera uma chamada da procedure; períodos já executados ficam fora do lote</p></div></section>
 <form method="post" action="{{ url_for('request_review') }}" id="req-form">
 <div class="card">
   <div class="row">

@@ -114,7 +114,18 @@ def create_app() -> Flask:
 
     @app.context_processor
     def _ctx():
-        return {"current_user": _user()}
+        ctx = {"current_user": _user(), "nav_dispatcher": None, "nav_attention": 0}
+        if request.endpoint and request.endpoint != "static" and not request.path.endswith("/partial"):
+            try:
+                db = services.db()
+                ctx["nav_dispatcher"] = repo.live_dispatcher(db)
+                ctx["nav_attention"] = db.one("""
+                    SELECT count(DISTINCT r.request_id) AS n FROM export_request r
+                    LEFT JOIN export_subblock s ON s.request_id = r.request_id AND s.status = 'UNKNOWN'
+                    WHERE r.status = 'FAILED' OR s.subblock_id IS NOT NULL""")["n"]
+            except Exception:  # noqa: BLE001 - o menu não deve derrubar a página
+                log.exception("falha ao montar o menu")
+        return ctx
 
     @app.errorhandler(repo.StateError)
     def _state_error(e):

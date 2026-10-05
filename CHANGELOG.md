@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 0.992 — 2026-10-05
+- Logo real do Sicoob e padrão visual do app Marketplace de Dados (menu lateral, cores teal/verde-escuro, banners, badges).
+
 ## 0.991 — 2026-10-05
 - Health check movido de /healthz (interceptado pela plataforma) para /api/health, retornando a versão.
 

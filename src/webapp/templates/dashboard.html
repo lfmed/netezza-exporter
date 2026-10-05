@@ -2,7 +2,7 @@
 {% from "_macros.html" import badge, progress %}
 {% block content %}
 <section class="head">
-  <h1>Painel da migração</h1>
+  <div><h1>📊 Painel da migração</h1><p>Completude por tabela: o que já foi migrado, o que está em execução e as lacunas</p></div>
   <div class="actions">
     {% if dispatcher %}
       <span class="pill live">● Dispatcher ativo · run {{ dispatcher.run_id }} · {{ dispatcher.in_flight }} chamada(s) em curso · heartbeat {{ dispatcher.heartbeat_at|dt }}</span>
@@ -19,10 +19,10 @@
   <h2>Completude da migração</h2>
   {% set o = overall %}
   <div class="kpis">
-    <div><span class="big">{{ o.done_days|pct(o.scope_days) }}%</span><small>dos dias de dados no escopo migrados</small></div>
+    <div class="ok"><span class="big">{{ o.done_days|pct(o.scope_days) }}%</span><small>dos dias de dados no escopo migrados</small></div>
     <div><span class="big">{{ o.complete_tables }}/{{ o.tables }}</span><small>tabelas completas</small></div>
-    <div><span class="big warn-text">{{ o.missing_days }}</span><small>dias sem pedido (lacunas)</small></div>
-    <div><span class="big bad-text">{{ o.failed_days + o.unknown_days }}</span><small>dias com falha/desconhecido</small></div>
+    <div class="warn"><span class="big">{{ o.missing_days }}</span><small>dias sem pedido (lacunas)</small></div>
+    <div class="err"><span class="big">{{ o.failed_days + o.unknown_days }}</span><small>dias com falha/desconhecido</small></div>
   </div>
   {{ progress(o.done_days, o.scope_days, o.failed_days + o.unknown_days, o.inflight_days, 'dias') }}
 </div>

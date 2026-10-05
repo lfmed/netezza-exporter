@@ -9,3 +9,4 @@ __pycache__/
 .DS_Store
 scripts/.gunicorn.log
 scripts/screenshots/
+scripts/ref_marketplace/
