@@ -37,8 +37,9 @@
     <div class="actions" style="margin-top:8px"><button class="btn danger">Cancelar subbloco</button></div>
   </form>
   {% elif sb.status == 'CANCELED' %}
-  <p class="hint">Cancelado: o período está livre e pode entrar em um novo pedido (ou ser repetido aqui, se ainda estiver livre).</p>
-  <form method="post" action="{{ url_for('subblock_retry', subblock_id=sb.subblock_id) }}"><button class="btn ghost">Repetir neste pedido</button></form>
+  <p class="hint">Cancelado: decisão definitiva neste pedido, sem repetir nem reprocessar aqui. O período ficou livre e
+    aparece como <b>lacuna</b> no painel; para executá-lo, crie um <b>novo pedido</b> (ou use "Criar pedido para as lacunas").</p>
+  <a class="btn ghost" href="{{ url_for('coverage_detail', table_config_id=sb.table_config_id) }}">Ver lacunas da tabela</a>
   {% else %}<p class="muted">Sem ações disponíveis neste estado.</p>{% endif %}
 </div>
 </div>

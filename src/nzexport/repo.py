@@ -433,16 +433,25 @@ def _refresh_request_status(conn, request_id, actor: str):
 
 
 def retry_subblock(db: Database, subblock_id: str, actor: str):
+    """Repete um subbloco com falha ou desconhecido. Cancelado é definitivo no pedido: o período só volta
+    a ser executado em um novo pedido."""
     try:
         with db.tx() as conn:
             sb = conn.execute("""
-                UPDATE export_subblock SET status = 'PENDING', next_attempt_at = NULL, updated_at = now()
-                WHERE subblock_id = %s AND status IN ('FAILED','UNKNOWN','CANCELED') RETURNING request_id""",
-                (subblock_id,)).fetchone()
+                UPDATE export_subblock s SET status = 'PENDING', next_attempt_at = NULL, updated_at = now()
+                FROM export_request r
+                WHERE s.subblock_id = %s AND s.status IN ('FAILED','UNKNOWN')
+                  AND r.request_id = s.request_id AND r.status <> 'CANCELED'
+                RETURNING s.request_id""", (subblock_id,)).fetchone()
             if sb is None:
-                raise StateError("subbloco não está em Falhou/Desconhecido/Cancelado")
+                cur = conn.execute("SELECT status FROM export_subblock WHERE subblock_id = %s", (subblock_id,)).fetchone()
+                if cur and cur["status"] == "CANCELED":
+                    raise StateError("subbloco cancelado não pode ser repetido neste pedido; "
+                                     "o período está livre para um novo pedido")
+                raise StateError("só é possível repetir subblocos com falha ou estado desconhecido "
+                                 "de pedidos não encerrados")
             conn.execute("""UPDATE export_request SET status = 'SUBMITTED', finished_at = NULL, updated_at = now()
-                            WHERE request_id = %s AND status IN ('FAILED','STOPPED','COMPLETED','CANCELED')""",
+                            WHERE request_id = %s AND status IN ('FAILED','STOPPED','COMPLETED')""",
                          (sb["request_id"],))
             log_event(conn, sb["request_id"], "SUBBLOCK_RETRY", actor, subblock_id=subblock_id)
     except psycopg.errors.ExclusionViolation:
