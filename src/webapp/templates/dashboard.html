@@ -37,18 +37,28 @@
         {% for s in ['COMPLETA','EM_ANDAMENTO','INCOMPLETA','COM_FALHAS','ESTADO_DESCONHECIDO','NAO_INICIADA','SEM_ESCOPO','INATIVA'] %}
         <option value="{{ s }}">{{ STATUS_LABEL[s] }}</option>{% endfor %}
       </select>
+      <select data-sort="#tbl-cov" title="Ordenar tabelas">
+        <option value="name:asc">Ordenar: nome (A→Z)</option>
+        <option value="pct:asc">Completude: menor primeiro</option>
+        <option value="pct:desc">Completude: maior primeiro</option>
+        <option value="missing:desc">Mais dias de lacuna</option>
+        <option value="problem:desc">Mais dias com falha/desconhecido</option>
+      </select>
       <button class="btn">Criar pedido para as lacunas selecionadas</button>
     </div>
   </div>
   <table class="grid" id="tbl-cov">
     <thead><tr>
       <th><input type="checkbox" onclick="document.querySelectorAll('[name=table_ids]').forEach(c => { if (!c.disabled) c.checked = this.checked })"></th>
-      <th>Tabela</th><th>Status</th><th>Escopo</th><th>Migrado</th><th>Em execução</th>
+      <th class="sortable" data-sort-key="name">Tabela</th><th>Status</th><th>Escopo</th>
+      <th class="sortable" data-sort-key="pct" title="Clique para ordenar pelo percentual de completude">Migrado (%)</th><th>Em execução</th>
       <th>Lacunas</th><th>Falha / desconhecido</th><th>Fora do escopo</th><th>Último sucesso</th>
     </tr></thead>
     <tbody>
     {% for t in tables %}
-      <tr data-cov="{{ t.coverage_status }}">
+      <tr data-cov="{{ t.coverage_status }}" data-name="{{ t.table_config_id }}"
+          data-pct="{{ '%.4f'|format(100 * t.done_days / t.scope_days) if t.scope_days else -1 }}"
+          data-missing="{{ t.missing_days or 0 }}" data-problem="{{ (t.failed_days or 0) + (t.unknown_days or 0) }}">
         <td><input type="checkbox" name="table_ids" value="{{ t.table_config_id }}" {{ 'disabled' if not t.gap_count }}></td>
         <td><a href="{{ url_for('coverage_detail', table_config_id=t.table_config_id) }}"><b>{{ t.table_config_id }}</b></a><br><small class="muted">{{ t.source_table }}</small></td>
         <td>{{ badge(t.coverage_status) }}</td>

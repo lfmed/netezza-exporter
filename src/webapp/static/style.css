@@ -126,3 +126,8 @@ details summary { cursor: pointer; color: var(--teal-d); margin: 8px 0; font-wei
 .grid.form-grid input[name=display_name], .grid.form-grid input[name=description] { width: 11em; }
 .grid.form-grid input[name=secret_scope] { width: 8em !important; }
 .s-scheduled { background: #e7e0f7; color: #5b3d8a; }
+.grid th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.grid th.sortable:hover { color: var(--teal-d); }
+.grid th.sortable::after { content: " ↕"; opacity: .4; }
+.grid th.sortable[data-dir="asc"]::after { content: " ▲"; opacity: 1; color: var(--teal-d); }
+.grid th.sortable[data-dir="desc"]::after { content: " ▼"; opacity: 1; color: var(--teal-d); }

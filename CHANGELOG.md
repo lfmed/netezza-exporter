@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 0.995 — 2026-10-05
+- Painel: ordenação da tabela de completude por percentual migrado (menor/maior), nome, lacunas ou falhas; cabeçalhos clicáveis e preferência lembrada no navegador.
+
 ## 0.994 — 2026-10-05
 - Agendamento do início da execução (data/hora futura) com disparo automático pelo app; Iniciar agora / reagendar; datas e horas no fuso America/Sao_Paulo (corrige prazo interpretado em UTC).
 
