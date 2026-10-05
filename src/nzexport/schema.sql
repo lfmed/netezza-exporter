@@ -89,10 +89,12 @@ CREATE TABLE IF NOT EXISTS export_request_table (
   calendar_aligned boolean NOT NULL DEFAULT true,
   is_reprocess     boolean NOT NULL DEFAULT false,
   reprocess_reason text,
+  excluded_ranges  jsonb,              -- períodos já executados/em execução deixados fora do lote
   CHECK (period_start <= period_end),
   CHECK (NOT is_reprocess OR coalesce(length(trim(reprocess_reason)), 0) > 0),
   FOREIGN KEY (table_config_id, config_version) REFERENCES table_config_version
 );
+ALTER TABLE export_request_table ADD COLUMN IF NOT EXISTS excluded_ranges jsonb;
 CREATE INDEX IF NOT EXISTS export_request_table_req_idx ON export_request_table (request_id);
 
 -- Subbloco = 1 chamada da procedure (tabela, data_ini, data_fim inclusiva)
@@ -191,7 +193,7 @@ CREATE TABLE IF NOT EXISTS dispatcher_run (
 DROP VIEW IF EXISTS v_request_table_progress;
 CREATE VIEW v_request_table_progress AS
 SELECT rt.request_id, rt.request_table_id, rt.ordinal, rt.table_config_id, rt.config_version,
-       rt.period_start, rt.period_end, rt.subblock_unit, rt.subblock_size, rt.is_reprocess,
+       rt.period_start, rt.period_end, rt.subblock_unit, rt.subblock_size, rt.is_reprocess, rt.excluded_ranges,
        count(s.*)                                         AS total,
        count(*) FILTER (WHERE s.status = 'DONE')          AS done,
        count(*) FILTER (WHERE s.status = 'RUNNING')       AS running,

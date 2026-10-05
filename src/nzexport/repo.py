@@ -7,7 +7,7 @@ import psycopg
 from psycopg.types.range import Range
 
 from .db import Database
-from .planner import plan
+from .planner import merge_contiguous, plan_pieces, subtract_ranges
 
 LIVE = ("PENDING", "RUNNING", "DONE", "UNKNOWN")
 ACTIVE_REQUEST = ("SUBMITTED", "RUNNING")
@@ -129,9 +129,19 @@ class TableRequest:
     reprocess_reason: str | None = None
     # preenchidos na revisão
     config_version: int | None = None
+    pieces: list = field(default_factory=list)      # intervalos que serão executados
     blocks: list = field(default_factory=list)
+    excluded: list = field(default_factory=list)    # períodos já executados/em execução, fora do lote
     conflicts: list = field(default_factory=list)
     superseded: list = field(default_factory=list)
+
+    @property
+    def excluded_days(self) -> int:
+        return sum(e["days"] for e in self.excluded)
+
+
+class NothingToRun(ValueError):
+    pass
 
 
 def _daterange(start: date, end_inclusive: date) -> Range:
@@ -147,76 +157,116 @@ def find_overlaps(conn, table_config_id: str, start: date, end: date, statuses=L
         ORDER BY lower(s.data_range)""", (table_config_id, _daterange(start, end), list(statuses))).fetchall()
 
 
+def _group_excluded(overlaps: list[dict], start: date, end: date) -> list[dict]:
+    """Agrupa subblocos sobrepostos por pedido/status em intervalos contíguos, recortados ao período pedido."""
+    groups: dict[tuple, list] = {}
+    for o in overlaps:
+        key = (str(o["request_id"]), o["request_name"], o["status"])
+        groups.setdefault(key, []).append((max(o["data_ini"], start), min(o["data_fim"], end)))
+    out = []
+    for (rid, name, status), ranges in groups.items():
+        for a, b in merge_contiguous(ranges):
+            out.append({"request_id": rid, "request_name": name, "status": status,
+                        "data_ini": a, "data_fim": b, "days": (b - a).days + 1})
+    return sorted(out, key=lambda e: e["data_ini"])
+
+
 def review(db: Database, tables: list[TableRequest]) -> list[TableRequest]:
-    """Planeja os subblocos e identifica conflitos sem gravar nada."""
+    """Planeja os subblocos sem gravar nada.
+
+    Períodos da tabela já concluídos, em execução ou com resultado desconhecido (em qualquer pedido)
+    são mostrados e excluídos do lote; só o restante vira subbloco. Em reprocessamento, os concluídos
+    entram no lote e serão substituídos; os em execução continuam excluídos.
+    """
     with db.pool.connection() as conn:
         for i, t in enumerate(tables):
-            cfg = conn.execute("""
-                SELECT tc.current_version, tc.active FROM table_config tc WHERE tc.table_config_id = %s""",
-                (t.table_config_id,)).fetchone()
+            t.pieces, t.blocks, t.excluded, t.conflicts, t.superseded = [], [], [], [], []
+            cfg = conn.execute("SELECT current_version, active FROM table_config WHERE table_config_id = %s",
+                               (t.table_config_id,)).fetchone()
             if not cfg or not cfg["active"]:
                 t.conflicts = [{"reason": "tabela não cadastrada ou inativa"}]
                 continue
             t.config_version = cfg["current_version"]
-            t.blocks = plan(t.period_start, t.period_end, t.subblock_unit, t.subblock_size, t.calendar_aligned)
             overlaps = find_overlaps(conn, t.table_config_id, t.period_start, t.period_end)
             if t.is_reprocess:
-                t.superseded = [o for o in overlaps if o["status"] == "DONE"]
+                t.superseded = _group_excluded([o for o in overlaps if o["status"] == "DONE"],
+                                               t.period_start, t.period_end)
                 overlaps = [o for o in overlaps if o["status"] != "DONE"]
-            t.conflicts = [{**o, "reason": f"já existe subbloco {o['status']}"} for o in overlaps]
+            t.excluded = _group_excluded(overlaps, t.period_start, t.period_end)
+            # linhas anteriores do mesmo pedido para a mesma tabela também ficam de fora
             for j, other in enumerate(tables[:i]):
-                if (other.table_config_id == t.table_config_id
-                        and other.period_start <= t.period_end and t.period_start <= other.period_end):
-                    t.conflicts.append({"reason": f"sobrepõe a linha {j + 1} deste pedido"})
+                if other.table_config_id != t.table_config_id:
+                    continue
+                for a, b in other.pieces:
+                    a, b = max(a, t.period_start), min(b, t.period_end)
+                    if a <= b:
+                        t.excluded.append({"request_id": None, "request_name": f"linha {j + 1} deste pedido",
+                                           "status": "THIS_REQUEST", "data_ini": a, "data_fim": b,
+                                           "days": (b - a).days + 1})
+            t.excluded.sort(key=lambda e: e["data_ini"])
+            t.pieces = subtract_ranges(t.period_start, t.period_end,
+                                       [(e["data_ini"], e["data_fim"]) for e in t.excluded])
+            t.blocks = plan_pieces(t.pieces, t.subblock_unit, t.subblock_size, t.calendar_aligned)
     return tables
 
 
 def create_request(db: Database, actor: str, name: str, max_parallel: int, deadline_at, notes: str | None,
                    tables: list[TableRequest]) -> str:
-    tables = review(db, tables)
-    conflicts = [c | {"table_config_id": t.table_config_id} for t in tables for c in t.conflicts]
-    if conflicts:
-        raise ConflictError(conflicts)
-    try:
-        with db.tx() as conn:
-            req = conn.execute("""
-                INSERT INTO export_request (request_name, requested_by, status, max_parallel, deadline_at, notes)
-                VALUES (%s,%s,'SUBMITTED',%s,%s,%s) RETURNING request_id""",
-                (name, actor, max_parallel, deadline_at, notes)).fetchone()
-            rid = req["request_id"]
-            for ordinal, t in enumerate(tables, start=1):
-                if t.is_reprocess:
-                    sup = conn.execute("""
-                        UPDATE export_subblock SET status = 'SUPERSEDED', updated_at = now()
-                        WHERE table_config_id = %s AND data_range && %s AND status = 'DONE'
-                        RETURNING subblock_id""", (t.table_config_id, _daterange(t.period_start, t.period_end))).fetchall()
-                    log_event(conn, rid, "REPROCESS_SUPERSEDED", actor,
-                              {"table_config_id": t.table_config_id, "subblocks": len(sup),
-                               "reason": t.reprocess_reason})
-                rt = conn.execute("""
-                    INSERT INTO export_request_table (request_id, ordinal, table_config_id, config_version,
-                      period_start, period_end, subblock_unit, subblock_size, calendar_aligned,
-                      is_reprocess, reprocess_reason)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING request_table_id""",
-                    (rid, ordinal, t.table_config_id, t.config_version, t.period_start, t.period_end,
-                     t.subblock_unit, t.subblock_size, t.calendar_aligned, t.is_reprocess,
-                     t.reprocess_reason)).fetchone()
-                with conn.cursor() as cur:
-                    cur.executemany("""
-                        INSERT INTO export_subblock (request_table_id, request_id, table_config_id, seq,
-                                                     data_range, status)
-                        VALUES (%s,%s,%s,%s,%s,'PENDING')""",
-                        [(rt["request_table_id"], rid, t.table_config_id, b.seq, _daterange(b.start, b.end))
-                         for b in t.blocks])
-            log_event(conn, rid, "REQUEST_SUBMITTED", actor,
-                      {"tables": [t.table_config_id for t in tables],
-                       "subblocks": sum(len(t.blocks) for t in tables), "max_parallel": max_parallel})
-            return str(rid)
-    except psycopg.errors.ExclusionViolation:
-        # corrida com outro pedido gravado entre a revisão e o insert
+    for attempt in range(2):
         tables = review(db, tables)
-        raise ConflictError([c | {"table_config_id": t.table_config_id} for t in tables for c in t.conflicts]
-                            or [{"reason": "sobreposição detectada pelo banco"}])
+        conflicts = [c | {"table_config_id": t.table_config_id} for t in tables for c in t.conflicts]
+        if conflicts:
+            raise ConflictError(conflicts)
+        if not any(t.blocks for t in tables):
+            raise NothingToRun("todos os períodos solicitados já foram executados ou estão em execução")
+        try:
+            return _insert_request(db, actor, name, max_parallel, deadline_at, notes, tables)
+        except psycopg.errors.ExclusionViolation:
+            # outro pedido gravou um período entre a revisão e o insert: revisa de novo uma vez
+            if attempt:
+                raise ConflictError([{"reason": "sobreposição detectada pelo banco; revise o pedido"}])
+    raise AssertionError("inalcançável")
+
+
+def _insert_request(db, actor, name, max_parallel, deadline_at, notes, tables: list[TableRequest]) -> str:
+    with db.tx() as conn:
+        req = conn.execute("""
+            INSERT INTO export_request (request_name, requested_by, status, max_parallel, deadline_at, notes)
+            VALUES (%s,%s,'SUBMITTED',%s,%s,%s) RETURNING request_id""",
+            (name, actor, max_parallel, deadline_at, notes)).fetchone()
+        rid = req["request_id"]
+        ordinal = 0
+        for t in tables:
+            if not t.blocks:
+                continue
+            ordinal += 1
+            if t.is_reprocess:
+                sup = conn.execute("""
+                    UPDATE export_subblock SET status = 'SUPERSEDED', updated_at = now()
+                    WHERE table_config_id = %s AND data_range && %s AND status = 'DONE'
+                    RETURNING subblock_id""", (t.table_config_id, _daterange(t.period_start, t.period_end))).fetchall()
+                log_event(conn, rid, "REPROCESS_SUPERSEDED", actor,
+                          {"table_config_id": t.table_config_id, "subblocks": len(sup), "reason": t.reprocess_reason})
+            rt = conn.execute("""
+                INSERT INTO export_request_table (request_id, ordinal, table_config_id, config_version,
+                  period_start, period_end, subblock_unit, subblock_size, calendar_aligned,
+                  is_reprocess, reprocess_reason, excluded_ranges)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING request_table_id""",
+                (rid, ordinal, t.table_config_id, t.config_version, t.period_start, t.period_end,
+                 t.subblock_unit, t.subblock_size, t.calendar_aligned, t.is_reprocess, t.reprocess_reason,
+                 json.dumps(t.excluded, default=str))).fetchone()
+            with conn.cursor() as cur:
+                cur.executemany("""
+                    INSERT INTO export_subblock (request_table_id, request_id, table_config_id, seq, data_range, status)
+                    VALUES (%s,%s,%s,%s,%s,'PENDING')""",
+                    [(rt["request_table_id"], rid, t.table_config_id, b.seq, _daterange(b.start, b.end))
+                     for b in t.blocks])
+        log_event(conn, rid, "REQUEST_SUBMITTED", actor,
+                  {"tables": [t.table_config_id for t in tables if t.blocks],
+                   "skipped_tables": [t.table_config_id for t in tables if not t.blocks],
+                   "subblocks": sum(len(t.blocks) for t in tables),
+                   "excluded_days": sum(t.excluded_days for t in tables), "max_parallel": max_parallel})
+        return str(rid)
 
 
 def list_requests(db: Database, status: str | None = None, limit: int = 200):

@@ -19,7 +19,7 @@ STATUS_LABEL = {
     "SUCCEEDED": "Sucesso", "ABANDONED": "Abandonado",
     "COMPLETA": "Completa", "EM_ANDAMENTO": "Em andamento", "INCOMPLETA": "Incompleta (lacunas)",
     "NAO_INICIADA": "Não iniciada", "COM_FALHAS": "Com falhas", "SEM_ESCOPO": "Sem escopo",
-    "ESTADO_DESCONHECIDO": "Estado desconhecido", "INATIVA": "Inativa",
+    "ESTADO_DESCONHECIDO": "Estado desconhecido", "INATIVA": "Inativa", "THIS_REQUEST": "Neste pedido",
 }
 UNIT_LABEL = {"DAY": "dia(s)", "WEEK": "semana(s)", "MONTH": "mês(es)", "YEAR": "ano(s)"}
 
@@ -199,7 +199,8 @@ def create_app() -> Flask:
         cfg = {t["table_config_id"]: t for t in repo.list_tables(db)}
         return render_template("request_review.html", rows=reviewed, form=request.form,
                                max_parallel=max_parallel, cfg=cfg, sources=sources,
-                               has_conflicts=any(r.conflicts for r in reviewed))
+                               has_conflicts=any(r.conflicts for r in reviewed),
+                               nothing_to_run=not any(r.blocks for r in reviewed))
 
     @app.post("/requests")
     def request_create():

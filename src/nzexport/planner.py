@@ -85,3 +85,42 @@ def plan(period_start: date, period_end: date, unit: str, size: int,
             raise ValueError(f"mais de {MAX_SUBBLOCKS_PER_TABLE} subblocos; aumente o tamanho do subbloco")
         cursor = stop
     return blocks
+
+
+def subtract_ranges(start: date, end: date, excluded: list[tuple[date, date]]) -> list[tuple[date, date]]:
+    """Retorna as partes de [start, end] (inclusivo) que não estão em nenhum intervalo excluído (inclusivos)."""
+    pieces = []
+    cursor = start
+    for ex_start, ex_end in sorted(excluded):
+        if ex_end < cursor or ex_start > end:
+            continue
+        if ex_start > cursor:
+            pieces.append((cursor, ex_start - timedelta(days=1)))
+        cursor = max(cursor, ex_end + timedelta(days=1))
+        if cursor > end:
+            break
+    if cursor <= end:
+        pieces.append((cursor, end))
+    return pieces
+
+
+def plan_pieces(pieces: list[tuple[date, date]], unit: str, size: int,
+                calendar_aligned: bool = True) -> list[Subblock]:
+    """Planeja vários intervalos disjuntos com numeração contínua de subblocos."""
+    blocks: list[Subblock] = []
+    for p_start, p_end in pieces:
+        for b in plan(p_start, p_end, unit, size, calendar_aligned):
+            blocks.append(Subblock(seq=len(blocks) + 1, start=b.start, end=b.end))
+    if len(blocks) > MAX_SUBBLOCKS_PER_TABLE:
+        raise ValueError(f"mais de {MAX_SUBBLOCKS_PER_TABLE} subblocos; aumente o tamanho do subbloco")
+    return blocks
+
+
+def merge_contiguous(ranges: list[tuple[date, date]]) -> list[tuple[date, date]]:
+    out: list[list[date]] = []
+    for s, e in sorted(ranges):
+        if out and s <= out[-1][1] + timedelta(days=1):
+            out[-1][1] = max(out[-1][1], e)
+        else:
+            out.append([s, e])
+    return [(s, e) for s, e in out]

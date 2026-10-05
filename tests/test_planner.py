@@ -63,3 +63,32 @@ def test_single_day_and_errors():
         plan(date(2024, 2, 1), date(2024, 1, 1), "DAY", 1)
     with pytest.raises(ValueError):
         plan(date(2000, 1, 1), date(2024, 1, 1), "DAY", 1)  # > 5000 subblocos
+
+
+from nzexport.planner import merge_contiguous, plan_pieces, subtract_ranges  # noqa: E402
+
+
+def test_subtract_ranges():
+    d = date
+    assert subtract_ranges(d(2024, 1, 1), d(2024, 12, 31), []) == [(d(2024, 1, 1), d(2024, 12, 31))]
+    # meio do período já executado
+    assert subtract_ranges(d(2024, 1, 1), d(2024, 12, 31), [(d(2024, 3, 1), d(2024, 5, 31))]) == [
+        (d(2024, 1, 1), d(2024, 2, 29)), (d(2024, 6, 1), d(2024, 12, 31))]
+    # excluídos nas bordas, sobrepostos e fora do período
+    assert subtract_ranges(d(2024, 1, 1), d(2024, 1, 31),
+                           [(d(2023, 12, 1), d(2024, 1, 5)), (d(2024, 1, 3), d(2024, 1, 10)),
+                            (d(2024, 1, 25), d(2024, 2, 10)), (d(2025, 1, 1), d(2025, 1, 2))]) == [
+        (d(2024, 1, 11), d(2024, 1, 24))]
+    # tudo já executado
+    assert subtract_ranges(d(2024, 1, 1), d(2024, 1, 31), [(d(2024, 1, 1), d(2024, 1, 31))]) == []
+
+
+def test_plan_pieces_and_merge():
+    d = date
+    blocks = plan_pieces([(d(2024, 1, 1), d(2024, 2, 29)), (d(2024, 6, 1), d(2024, 7, 15))], "MONTH", 1)
+    assert [(b.seq, b.start, b.end) for b in blocks] == [
+        (1, d(2024, 1, 1), d(2024, 1, 31)), (2, d(2024, 2, 1), d(2024, 2, 29)),
+        (3, d(2024, 6, 1), d(2024, 6, 30)), (4, d(2024, 7, 1), d(2024, 7, 15))]
+    assert merge_contiguous([(d(2024, 1, 1), d(2024, 1, 31)), (d(2024, 2, 1), d(2024, 2, 29)),
+                             (d(2024, 4, 1), d(2024, 4, 30))]) == [
+        (d(2024, 1, 1), d(2024, 2, 29)), (d(2024, 4, 1), d(2024, 4, 30))]

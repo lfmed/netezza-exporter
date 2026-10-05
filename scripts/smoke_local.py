@@ -41,13 +41,19 @@ tables = [repo.TableRequest("FATO_VENDAS", date(year, 1, 1), date(year, 6, 30), 
 rid = repo.create_request(db, ACTOR, f"smoke {tag}", 3, None, "teste local", tables)
 print("pedido", rid)
 
-# sobreposição deve ser bloqueada
+# período totalmente coberto por outro pedido: nada a executar
 try:
     repo.create_request(db, ACTOR, "duplicado", 1, None, None,
                         [repo.TableRequest("FATO_VENDAS", date(year, 3, 15), date(year, 4, 15), "MONTH", 1)])
-    raise SystemExit("ERRO: sobreposição não bloqueada")
-except repo.ConflictError as e:
-    print("sobreposição bloqueada:", len(e.conflicts), "conflito(s)")
+    raise SystemExit("ERRO: período já pedido não foi excluído")
+except repo.NothingToRun:
+    print("período já pedido excluído: nada a executar")
+
+# sobreposição parcial: só o restante vira subbloco
+partial = repo.review(db, [repo.TableRequest("FATO_VENDAS", date(year, 5, 1), date(year, 8, 31), "MONTH", 1)])[0]
+assert [(b.start, b.end) for b in partial.blocks] == [(date(year, 7, 1), date(year, 7, 31)),
+                                                      (date(year, 8, 1), date(year, 8, 31))], partial.blocks
+print("sobreposição parcial: excluídos", partial.excluded_days, "dias; a executar", len(partial.blocks), "subblocos")
 
 peak = {"n": 0}
 stop = threading.Event()

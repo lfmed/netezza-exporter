@@ -68,3 +68,4 @@ details summary { cursor: pointer; color: var(--accent); margin: 8px 0; }
 .s-incompleta, .s-com_falhas { background: #ffebe9; color: var(--bad); }
 .s-nao_iniciada, .s-sem_escopo { background: #eef0f2; color: #57606a; }
 @media (max-width: 960px) { .kpis, .cols3 { grid-template-columns: 1fr 1fr; } }
+.s-this_request { background: #eef0f2; color: #57606a; }

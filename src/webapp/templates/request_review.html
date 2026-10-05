@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import badge %}
 {% block content %}
 <section class="head"><h1>Revisão do pedido</h1></section>
 <div class="card">
@@ -18,16 +19,32 @@
   <p class="muted">Procedure <code>{{ c.procedure_name }}('{{ c.source_table }}', data_ini, data_fim)</code> · versão da config {{ c.config_version }} ·
      até {{ c.max_parallel }} chamada(s) simultânea(s) nesta tabela · origem {{ c.source_id }} (limite global {{ src.max_sessions if src else '?' }}, driver <b>{{ src.driver if src else '?' }}</b>)</p>
   {% endif %}
-  <p>{{ r.period_start|dt }} → {{ r.period_end|dt }} · subbloco de {{ r.subblock_size }} {{ UNIT_LABEL[r.subblock_unit] }}{% if r.calendar_aligned %} (alinhado ao calendário){% endif %} ·
+  <p>Solicitado: {{ r.period_start|dt }} → {{ r.period_end|dt }} · subbloco de {{ r.subblock_size }} {{ UNIT_LABEL[r.subblock_unit] }}{% if r.calendar_aligned %} (alinhado ao calendário){% endif %} ·
      <b>{{ r.blocks|length }} subbloco(s)</b></p>
   {% if r.conflicts %}
-    <div class="flash error">Conflitos — o pedido não pode ser criado:
-      <ul>{% for x in r.conflicts %}<li>{{ x.reason }}{% if x.request_name %}: pedido <a href="{{ url_for('request_detail', request_id=x.request_id) }}">{{ x.request_name }}</a>, {{ x.data_ini|dt }} → {{ x.data_fim|dt }}{% endif %}</li>{% endfor %}</ul>
-      {% if not r.is_reprocess %}Para exportar de novo um período já concluído, marque <b>Reprocessar</b> e informe a justificativa.{% endif %}
+    <div class="flash error">Não é possível incluir esta tabela:
+      <ul>{% for x in r.conflicts %}<li>{{ x.reason }}</li>{% endfor %}</ul></div>
+  {% endif %}
+  {% if r.excluded %}
+    <div class="flash warn">
+      <b>{{ r.excluded_days }} dia(s) já executados ou em execução foram excluídos do lote</b>; só o restante será enviado à procedure.
+      <table class="grid compact" style="margin-top:8px"><thead><tr><th>Período excluído</th><th>Dias</th><th>Situação</th><th>Pedido</th></tr></thead><tbody>
+      {% for x in r.excluded %}<tr><td class="nowrap">{{ x.data_ini|dt }} → {{ x.data_fim|dt }}</td><td>{{ x.days }}</td><td>{{ badge(x.status) }}</td>
+        <td>{% if x.request_id %}<a href="{{ url_for('request_detail', request_id=x.request_id) }}">{{ x.request_name }}</a>{% else %}{{ x.request_name }}{% endif %}</td></tr>{% endfor %}
+      </tbody></table>
+      {% if not r.is_reprocess and r.excluded|selectattr('status', 'equalto', 'DONE')|list %}<small>Para executar de novo períodos já concluídos, volte e marque <b>Reprocessar</b> com justificativa.</small>{% endif %}
     </div>
   {% endif %}
   {% if r.superseded %}
-    <div class="flash warn">{{ r.superseded|length }} subbloco(s) já concluído(s) serão marcados como <b>Substituído</b> por este reprocessamento.</div>
+    <div class="flash warn">Reprocessamento: {{ r.superseded|sum(attribute='days') }} dia(s) já concluídos serão executados de novo e os subblocos anteriores ficarão como <b>Substituído</b>.</div>
+  {% endif %}
+  {% if not r.conflicts %}
+    {% if r.blocks %}
+    <p><b>Períodos que serão executados:</b>
+      {% for a, b in r.pieces %}<span class="badge s-running">{{ a|dt }} → {{ b|dt }}</span> {% endfor %}</p>
+    {% else %}
+    <div class="flash info">Nada a executar para esta tabela: todo o período solicitado já foi executado ou está em execução. Ela será ignorada.</div>
+    {% endif %}
   {% endif %}
   {% if r.blocks %}
   <details {{ 'open' if r.blocks|length <= 24 }}><summary>Ver subblocos</summary>
@@ -48,6 +65,7 @@
   {% endfor %}
   <a class="btn ghost" href="javascript:history.back()">Voltar e editar</a>
   <label class="check"><input type="checkbox" required> Confirmo que o pedido pode gerar grande volume de dados no destino</label>
-  <button class="btn" {{ 'disabled' if has_conflicts }}>Criar pedido e executar</button>
+  {% if nothing_to_run %}<span class="muted">Nenhum período novo a executar.</span>{% endif %}
+  <button class="btn" {{ 'disabled' if has_conflicts or nothing_to_run }}>Criar pedido e executar</button>
 </form>
 {% endblock %}
