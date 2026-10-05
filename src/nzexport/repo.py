@@ -9,7 +9,9 @@ from psycopg.types.range import Range
 from .db import Database
 from .planner import merge_contiguous, plan_pieces, subtract_ranges
 
-LIVE = ("PENDING", "RUNNING", "DONE", "UNKNOWN")
+# Status que reservam o período da tabela. FAILED reserva até o usuário repetir ou cancelar;
+# CANCELED/SUPERSEDED liberam o período para um novo pedido.
+LIVE = ("PENDING", "RUNNING", "DONE", "UNKNOWN", "FAILED")
 ACTIVE_REQUEST = ("SUBMITTED", "RUNNING")
 TERMINAL_REQUEST = ("STOPPED", "FAILED", "COMPLETED", "CANCELED")
 
@@ -358,7 +360,7 @@ def cancel_request(db: Database, request_id: str, actor: str, reason: str | None
                             ("SUBMITTED", "RUNNING", "STOPPING", "STOPPED", "FAILED"), reason=reason,
                             extra_sql=", finished_at = now()")
         n = conn.execute("""UPDATE export_subblock SET status = 'CANCELED', updated_at = now()
-                            WHERE request_id = %s AND status = 'PENDING'""", (request_id,)).rowcount
+                            WHERE request_id = %s AND status IN ('PENDING','FAILED')""", (request_id,)).rowcount
         log_event(conn, request_id, "SUBBLOCKS_CANCELED", actor, {"count": n})
 
 
@@ -371,18 +373,75 @@ def set_parallelism(db: Database, request_id: str, actor: str, max_parallel: int
                   {"from": old["max_parallel"] if old else None, "to": max_parallel})
 
 
+def _refresh_request_status(conn, request_id, actor: str):
+    """Após decisões manuais em subblocos, ajusta o status de um pedido já encerrado pelo dispatcher."""
+    c = conn.execute("""
+        SELECT r.status,
+               count(*) FILTER (WHERE s.status IN ('PENDING','RUNNING')) AS active,
+               count(*) FILTER (WHERE s.status IN ('FAILED','UNKNOWN')) AS bad,
+               count(*) FILTER (WHERE s.status = 'CANCELED') AS canceled
+        FROM export_request r LEFT JOIN export_subblock s USING (request_id)
+        WHERE r.request_id = %s GROUP BY r.status""", (request_id,)).fetchone()
+    if not c or c["status"] not in ("FAILED", "COMPLETED") or c["active"]:
+        return
+    new = "FAILED" if c["bad"] else "COMPLETED"
+    reason = (f"{c['bad']} subbloco(s) com falha ou estado desconhecido" if c["bad"] else
+              f"{c['canceled']} subbloco(s) cancelado(s): período liberado para novo pedido" if c["canceled"] else None)
+    conn.execute("UPDATE export_request SET status = %s, status_reason = %s, updated_at = now() WHERE request_id = %s",
+                 (new, reason, request_id))
+    if new != c["status"]:
+        log_event(conn, request_id, f"REQUEST_{new}", actor, {"reason": reason})
+
+
 def retry_subblock(db: Database, subblock_id: str, actor: str):
+    try:
+        with db.tx() as conn:
+            sb = conn.execute("""
+                UPDATE export_subblock SET status = 'PENDING', next_attempt_at = NULL, updated_at = now()
+                WHERE subblock_id = %s AND status IN ('FAILED','UNKNOWN','CANCELED') RETURNING request_id""",
+                (subblock_id,)).fetchone()
+            if sb is None:
+                raise StateError("subbloco não está em Falhou/Desconhecido/Cancelado")
+            conn.execute("""UPDATE export_request SET status = 'SUBMITTED', finished_at = NULL, updated_at = now()
+                            WHERE request_id = %s AND status IN ('FAILED','STOPPED','COMPLETED','CANCELED')""",
+                         (sb["request_id"],))
+            log_event(conn, sb["request_id"], "SUBBLOCK_RETRY", actor, subblock_id=subblock_id)
+    except psycopg.errors.ExclusionViolation:
+        raise StateError("o período deste subbloco já faz parte de outro pedido; não é possível repeti-lo aqui") from None
+
+
+def retry_failed(db: Database, request_id: str, actor: str) -> int:
+    """Recoloca na fila todos os subblocos com falha do pedido."""
     with db.tx() as conn:
-        sb = conn.execute("""
+        n = len(conn.execute("""
             UPDATE export_subblock SET status = 'PENDING', next_attempt_at = NULL, updated_at = now()
-            WHERE subblock_id = %s AND status IN ('FAILED','UNKNOWN','CANCELED') RETURNING request_id""",
-            (subblock_id,)).fetchone()
-        if sb is None:
-            raise StateError("subbloco não está em FAILED/UNKNOWN/CANCELED")
-        conn.execute("""UPDATE export_request SET status = 'SUBMITTED', finished_at = NULL, updated_at = now()
-                        WHERE request_id = %s AND status IN ('FAILED','STOPPED','COMPLETED','CANCELED')""",
-                     (sb["request_id"],))
-        log_event(conn, sb["request_id"], "SUBBLOCK_RETRY", actor, subblock_id=subblock_id)
+            WHERE request_id = %s AND status = 'FAILED' RETURNING subblock_id""", (request_id,)).fetchall())
+        if n:
+            conn.execute("""UPDATE export_request SET status = 'SUBMITTED', finished_at = NULL, updated_at = now()
+                            WHERE request_id = %s AND status IN ('FAILED','STOPPED','COMPLETED')""", (request_id,))
+            log_event(conn, request_id, "FAILED_SUBBLOCKS_RETRY", actor, {"count": n})
+        return n
+
+
+def cancel_failed(db: Database, request_id: str, actor: str, reason: str, subblock_id: str | None = None) -> int:
+    """Cancela subblocos com falha (um ou todos do pedido): o período fica livre para um novo pedido."""
+    with db.tx() as conn:
+        extra = "AND subblock_id = %s" if subblock_id else ""
+        params = (request_id, subblock_id) if subblock_id else (request_id,)
+        rows = conn.execute(f"""
+            UPDATE export_subblock SET status = 'CANCELED', next_attempt_at = NULL, updated_at = now(),
+                   last_error = coalesce(last_error, '') || ' | cancelado: ' || %s
+            WHERE request_id = %s AND status = 'FAILED' {extra}
+            RETURNING subblock_id, lower(data_range) AS data_ini, upper(data_range) - 1 AS data_fim""",
+            (reason, *params)).fetchall()
+        if not rows:
+            raise StateError("nenhum subbloco com falha para cancelar")
+        log_event(conn, request_id, "FAILED_SUBBLOCKS_CANCELED", actor,
+                  {"count": len(rows), "reason": reason,
+                   "periods": [f"{r['data_ini']}..{r['data_fim']}" for r in rows][:50]},
+                  subblock_id=subblock_id)
+        _refresh_request_status(conn, request_id, actor)
+        return len(rows)
 
 
 def resolve_unknown(db: Database, subblock_id: str, actor: str, done: bool, reason: str):

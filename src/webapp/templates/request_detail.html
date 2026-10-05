@@ -47,6 +47,23 @@
   </div>
 </div>
 
+{% if totals.failed %}
+<div class="card conflict">
+  <h2>⚠️ {{ totals.failed }} subbloco(s) com falha aguardando decisão</h2>
+  <p class="hint" style="margin-top:0">Enquanto não houver decisão, o período continua reservado para este pedido. <b>Repetir</b> recoloca na fila;
+    <b>Cancelar</b> libera o período, que passa a aparecer como lacuna no painel e pode entrar em um novo pedido.
+    Também é possível decidir por subbloco na lista abaixo.</p>
+  <div class="actions">
+    <form method="post" action="{{ url_for('request_failed_retry', request_id=req.request_id) }}"><button class="btn">Repetir todos os falhos</button></form>
+    <form method="post" action="{{ url_for('request_failed_cancel', request_id=req.request_id) }}" class="inline"
+          onsubmit="return confirm('Cancelar os subblocos com falha? Os períodos ficarão livres para um novo pedido.')">
+      <input name="reason" required placeholder="motivo do cancelamento" style="width:22em">
+      <button class="btn danger">Cancelar todos os falhos</button></form>
+    <a class="btn ghost" href="{{ url_for('request_detail', request_id=req.request_id, sb_status='FAILED') }}">Ver só os falhos</a>
+  </div>
+</div>
+{% endif %}
+
 <div id="progress" data-src="{{ url_for('request_partial', request_id=req.request_id, sb_status=sb_status) }}"
      data-live="{{ '1' if req.status in ('SUBMITTED','RUNNING','STOPPING') else '0' }}">
   {% include "_request_progress.html" %}

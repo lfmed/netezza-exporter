@@ -50,6 +50,11 @@
         <td class="nowrap"><a href="{{ url_for('subblock_detail', subblock_id=s.subblock_id) }}">detalhes</a>
           {% if s.status in ('FAILED', 'CANCELED') %}
           <form method="post" action="{{ url_for('subblock_retry', subblock_id=s.subblock_id) }}" class="inline"><button class="btn ghost small">repetir</button></form>
+          {% endif %}
+          {% if s.status == 'FAILED' %}
+          <form method="post" action="{{ url_for('subblock_cancel', subblock_id=s.subblock_id) }}" class="inline"
+                onsubmit="const r = prompt('Motivo do cancelamento (o período fica livre para um novo pedido):'); if (!r) return false; this.reason.value = r;">
+            <input type="hidden" name="reason"><button class="btn danger small">cancelar</button></form>
           {% endif %}</td>
       </tr>
     {% else %}<tr><td colspan="11" class="empty">Nenhum subbloco.</td></tr>{% endfor %}</tbody>

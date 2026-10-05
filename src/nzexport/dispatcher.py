@@ -309,13 +309,14 @@ class Dispatcher:
         with self.db.tx() as conn:
             rows = conn.execute("""
                 SELECT r.request_id, r.status, (r.deadline_at IS NOT NULL AND r.deadline_at <= now()) AS expired,
-                       c.running, c.pending, c.bad, c.done
+                       c.running, c.pending, c.bad, c.done, c.canceled
                 FROM export_request r
                 CROSS JOIN LATERAL (
                   SELECT count(*) FILTER (WHERE s.status = 'RUNNING') AS running,
                          count(*) FILTER (WHERE s.status = 'PENDING') AS pending,
                          count(*) FILTER (WHERE s.status IN ('FAILED','UNKNOWN')) AS bad,
-                         count(*) FILTER (WHERE s.status = 'DONE') AS done
+                         count(*) FILTER (WHERE s.status = 'DONE') AS done,
+                         count(*) FILTER (WHERE s.status = 'CANCELED') AS canceled
                   FROM export_subblock s WHERE s.request_id = r.request_id) c
                 WHERE r.status IN ('SUBMITTED','RUNNING','STOPPING')
                 FOR UPDATE OF r SKIP LOCKED""").fetchall()
@@ -327,7 +328,8 @@ class Dispatcher:
                     new, reason = "STOPPED", "parado pelo usuário"
                 elif r["pending"] == 0:
                     new = "COMPLETED" if r["bad"] == 0 else "FAILED"
-                    reason = None if new == "COMPLETED" else f"{r['bad']} subbloco(s) com falha ou estado desconhecido"
+                    reason = (f"{r['bad']} subbloco(s) com falha ou estado desconhecido" if new == "FAILED" else
+                              f"{r['canceled']} subbloco(s) cancelado(s)" if r["canceled"] else None)
                 elif r["expired"]:
                     new, reason = "STOPPED", "janela operacional encerrada"
                 if new:
@@ -343,7 +345,8 @@ class Dispatcher:
               SELECT p.request_id, p.request_table_id, p.table_config_id, p.period_start, p.period_end,
                      p.last_finished_at
               FROM v_request_table_progress p
-              WHERE p.total > p.canceled AND p.done = p.total - p.canceled)
+              -- só dispara com a tabela inteira concluída (subbloco cancelado = período não exportado)
+              WHERE p.total > p.canceled AND p.done = p.total - p.canceled AND p.canceled_only = 0)
             SELECT h.hook_id, h.job_id, h.trigger_level, d.request_id, d.request_table_id, d.table_config_id,
                    d.period_start, d.period_end
             FROM post_export_hook h JOIN rt_done d

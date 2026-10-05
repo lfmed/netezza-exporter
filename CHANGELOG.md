@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 0.993 — 2026-10-05
+- Subblocos com falha reservam o período até decisão: repetir (um ou todos) ou cancelar com motivo; cancelados viram lacunas e podem entrar em novo pedido. Hook de tabela só dispara sem subblocos cancelados.
+
 ## 0.992 — 2026-10-05
 - Logo real do Sicoob e padrão visual do app Marketplace de Dados (menu lateral, cores teal/verde-escuro, banners, badges).
 

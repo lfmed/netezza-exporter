@@ -33,6 +33,7 @@
       {% for x in r.excluded %}<tr><td class="nowrap">{{ x.data_ini|dt }} → {{ x.data_fim|dt }}</td><td>{{ x.days }}</td><td>{{ badge(x.status) }}</td>
         <td>{% if x.request_id %}<a href="{{ url_for('request_detail', request_id=x.request_id) }}">{{ x.request_name }}</a>{% else %}{{ x.request_name }}{% endif %}</td></tr>{% endfor %}
       </tbody></table>
+      {% if r.excluded|selectattr('status', 'equalto', 'FAILED')|list %}<small>Períodos com <b>falha</b> continuam reservados ao pedido de origem: abra o pedido e escolha <b>repetir</b> ou <b>cancelar</b>. Depois de cancelados, eles podem entrar neste ou em outro pedido.</small><br>{% endif %}
       {% if not r.is_reprocess and r.excluded|selectattr('status', 'equalto', 'DONE')|list %}<small>Para executar de novo períodos já concluídos, volte e marque <b>Reprocessar</b> com justificativa.</small>{% endif %}
     </div>
   {% endif %}

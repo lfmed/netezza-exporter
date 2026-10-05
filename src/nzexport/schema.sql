@@ -120,12 +120,22 @@ CREATE TABLE IF NOT EXISTS export_subblock (
 CREATE INDEX IF NOT EXISTS export_subblock_status_idx ON export_subblock (status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS export_subblock_req_idx ON export_subblock (request_id, status);
 
--- Bloqueio de duplicidade no banco: dois subblocos vivos da mesma tabela não podem se sobrepor
+-- Bloqueio de duplicidade no banco: dois subblocos vivos da mesma tabela não podem se sobrepor.
+-- FAILED também reserva o período até o usuário repetir ou cancelar; CANCELED libera para novo pedido.
 DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'export_subblock_no_overlap'
+             AND pg_get_constraintdef(oid) NOT LIKE '%FAILED%') THEN
+    ALTER TABLE export_subblock DROP CONSTRAINT export_subblock_no_overlap;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'export_subblock_no_overlap') THEN
+    -- falhas antigas cujo período já foi pedido de novo viram canceladas (decisão já tomada na prática)
+    UPDATE export_subblock f SET status = 'CANCELED', updated_at = now()
+    WHERE f.status = 'FAILED' AND EXISTS (
+      SELECT 1 FROM export_subblock o WHERE o.table_config_id = f.table_config_id AND o.subblock_id <> f.subblock_id
+        AND o.status IN ('PENDING','RUNNING','DONE','UNKNOWN') AND o.data_range && f.data_range);
     ALTER TABLE export_subblock ADD CONSTRAINT export_subblock_no_overlap
       EXCLUDE USING gist (table_config_id WITH =, data_range WITH &&)
-      WHERE (status IN ('PENDING','RUNNING','DONE','UNKNOWN'));
+      WHERE (status IN ('PENDING','RUNNING','DONE','UNKNOWN','FAILED'));
   END IF;
 END $$;
 
@@ -201,6 +211,7 @@ SELECT rt.request_id, rt.request_table_id, rt.ordinal, rt.table_config_id, rt.co
        count(*) FILTER (WHERE s.status = 'FAILED')        AS failed,
        count(*) FILTER (WHERE s.status = 'UNKNOWN')       AS unknown,
        count(*) FILTER (WHERE s.status IN ('CANCELED','SUPERSEDED')) AS canceled,
+       count(*) FILTER (WHERE s.status = 'CANCELED')      AS canceled_only,
        min(s.started_at) AS started_at, max(s.finished_at) AS last_finished_at
 FROM export_request_table rt
 LEFT JOIN export_subblock s ON s.request_table_id = rt.request_table_id
@@ -238,9 +249,9 @@ WITH cur AS (
          coalesce(m.inflight_mr, '{}') AS inflight_mr,
          coalesce(m.unknown_mr, '{}')  AS unknown_mr,
          -- falhas ainda não cobertas por outro subbloco vivo
-         coalesce(m.failed_mr, '{}') - coalesce(m.live_mr, '{}') AS failed_open_mr,
-         -- lacunas: parte do escopo sem nenhum subbloco vivo (nunca pedida, cancelada ou falha)
-         CASE WHEN c.scope IS NOT NULL THEN c.scope - coalesce(m.live_mr, '{}') END AS missing_mr,
+         coalesce(m.failed_mr, '{}') AS failed_open_mr,   -- falhas aguardando repetir ou cancelar
+         -- lacunas: parte do escopo sem subbloco vivo nem falha pendente (nunca pedida ou cancelada)
+         CASE WHEN c.scope IS NOT NULL THEN c.scope - coalesce(m.live_mr, '{}') - coalesce(m.failed_mr, '{}') END AS missing_mr,
          CASE WHEN c.scope IS NOT NULL THEN coalesce(m.done_mr, '{}') - c.scope END AS done_outside_mr,
          coalesce(m.running, 0) AS running, coalesce(m.pending, 0) AS pending, m.last_success_at
   FROM cur c LEFT JOIN mr m ON m.table_config_id = c.table_config_id

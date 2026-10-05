@@ -297,6 +297,39 @@ def create_app() -> Flask:
             flash(f"Paralelismo do pedido alterado para {n}. Vale a partir do próximo ciclo do dispatcher.", "info")
         return redirect(url_for("request_detail", request_id=request_id))
 
+    @app.post("/requests/<request_id>/failed/retry")
+    def request_failed_retry(request_id):
+        n = repo.retry_failed(services.db(), request_id, _user())
+        if n:
+            services.ensure_dispatcher()
+        flash(f"{n} subbloco(s) com falha recolocado(s) na fila." if n else "Nenhum subbloco com falha.", "info")
+        return redirect(url_for("request_detail", request_id=request_id))
+
+    @app.post("/requests/<request_id>/failed/cancel")
+    def request_failed_cancel(request_id):
+        reason = (request.form.get("reason") or "").strip()
+        if not reason:
+            flash("Informe o motivo do cancelamento.", "error")
+        else:
+            n = repo.cancel_failed(services.db(), request_id, _user(), reason)
+            flash(f"{n} subbloco(s) com falha cancelado(s). Os períodos agora aparecem como lacunas e podem entrar "
+                  "em um novo pedido.", "info")
+        return redirect(url_for("request_detail", request_id=request_id))
+
+    @app.post("/subblocks/<subblock_id>/cancel")
+    def subblock_cancel(subblock_id):
+        db = services.db()
+        sb = db.one("SELECT request_id FROM export_subblock WHERE subblock_id = %s", (subblock_id,))
+        if not sb:
+            abort(404)
+        reason = (request.form.get("reason") or "").strip()
+        if not reason:
+            flash("Informe o motivo do cancelamento.", "error")
+        else:
+            repo.cancel_failed(db, sb["request_id"], _user(), reason, subblock_id=subblock_id)
+            flash("Subbloco cancelado. O período ficou livre para um novo pedido.", "info")
+        return redirect(request.referrer or url_for("request_detail", request_id=sb["request_id"]))
+
     @app.get("/subblocks/<subblock_id>")
     def subblock_detail(subblock_id):
         db = services.db()

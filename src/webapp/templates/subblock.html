@@ -26,8 +26,19 @@
   </form>
   <form method="post" action="{{ url_for('subblock_retry', subblock_id=sb.subblock_id) }}" onsubmit="return confirm('Reexecutar a procedure para este subbloco? Só é seguro se a procedure for idempotente.')">
     <button class="btn ghost">Reexecutar</button></form>
-  {% elif sb.status in ('FAILED', 'CANCELED') %}
-  <form method="post" action="{{ url_for('subblock_retry', subblock_id=sb.subblock_id) }}"><button class="btn">Repetir subbloco</button></form>
+  {% elif sb.status == 'FAILED' %}
+  <h3>Decisão sobre a falha</h3>
+  <p class="hint">O período continua reservado até você decidir. Cancelar libera o período para um novo pedido.</p>
+  <div class="actions">
+    <form method="post" action="{{ url_for('subblock_retry', subblock_id=sb.subblock_id) }}"><button class="btn">Repetir subbloco</button></form>
+  </div>
+  <form method="post" action="{{ url_for('subblock_cancel', subblock_id=sb.subblock_id) }}" style="margin-top:12px">
+    <label>Motivo do cancelamento<input name="reason" required></label>
+    <div class="actions" style="margin-top:8px"><button class="btn danger">Cancelar subbloco</button></div>
+  </form>
+  {% elif sb.status == 'CANCELED' %}
+  <p class="hint">Cancelado: o período está livre e pode entrar em um novo pedido (ou ser repetido aqui, se ainda estiver livre).</p>
+  <form method="post" action="{{ url_for('subblock_retry', subblock_id=sb.subblock_id) }}"><button class="btn ghost">Repetir neste pedido</button></form>
   {% else %}<p class="muted">Sem ações disponíveis neste estado.</p>{% endif %}
 </div>
 </div>
