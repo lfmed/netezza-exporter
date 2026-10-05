@@ -392,7 +392,7 @@ def create_app() -> Flask:
         req = _load_request(request_id)
         return jsonify({"request": req, "tables": repo.request_tables(db, request_id)})
 
-    @app.get("/healthz")
+    @app.get("/api/health")
     def healthz():
         services.db().one("SELECT 1 AS ok")
         return {"ok": True, "version": APP_VERSION}
