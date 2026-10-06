@@ -166,7 +166,8 @@ class Dispatcher:
                   AND (r.scheduled_start_at IS NULL OR r.scheduled_start_at <= now())
                   AND (r.deadline_at IS NULL OR r.deadline_at > now())
                   AND tc.active
-                ORDER BY r.submitted_at, rt.ordinal, s.seq
+                -- pedidos em ordem de chegada; dentro de cada tabela, do período mais recente para o mais antigo
+                ORDER BY r.submitted_at, rt.ordinal, lower(s.data_range) DESC
                 LIMIT 2000
                 FOR UPDATE OF s SKIP LOCKED""").fetchall()
 

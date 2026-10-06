@@ -330,7 +330,7 @@ def request_subblocks(db: Database, request_id: str, status: str | None = None, 
                            WHERE subblock_id = s.subblock_id ORDER BY attempt_no DESC LIMIT 1) a ON true
         WHERE s.request_id = %s {extra}
         ORDER BY CASE s.status WHEN 'RUNNING' THEN 0 WHEN 'UNKNOWN' THEN 1 WHEN 'FAILED' THEN 2
-                 WHEN 'PENDING' THEN 3 ELSE 4 END, rt.ordinal, s.seq
+                 WHEN 'PENDING' THEN 3 ELSE 4 END, rt.ordinal, lower(s.data_range) DESC
         LIMIT %s""", params)
 
 

@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 0.998 — 2026-10-06
+- Subblocos executados do período mais recente para o mais antigo (dentro de cada pedido/tabela); listas do pedido e da revisão na mesma ordem.
+
 ## 0.997 — 2026-10-05
 - Subbloco cancelado é definitivo no pedido: não pode ser repetido nem reprocessado ali (bloqueado no servidor e sem botão na tela); o período só volta a ser executado em um novo pedido.
 

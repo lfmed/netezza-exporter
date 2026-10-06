@@ -50,9 +50,9 @@
     {% endif %}
   {% endif %}
   {% if r.blocks %}
-  <details {{ 'open' if r.blocks|length <= 24 }}><summary>Ver subblocos</summary>
+  <details {{ 'open' if r.blocks|length <= 24 }}><summary>Ver subblocos (na ordem de execução: do mais recente para o mais antigo)</summary>
     <table class="grid compact"><thead><tr><th>#</th><th>data_ini</th><th>data_fim (inclusiva)</th><th>Chamada</th></tr></thead><tbody>
-    {% for b in r.blocks[:500] %}<tr><td>{{ b.seq }}</td><td>{{ b.start }}</td><td>{{ b.end }}</td>
+    {% for b in (r.blocks|reverse|list)[:500] %}<tr><td>{{ b.seq }}</td><td>{{ b.start }}</td><td>{{ b.end }}</td>
       <td><code>{{ c.procedure_name if c }}('{{ c.source_table if c }}', '{{ b.start }}', '{{ b.end }}')</code></td></tr>{% endfor %}
     {% if r.blocks|length > 500 %}<tr><td colspan="4" class="muted">… mais {{ r.blocks|length - 500 }}</td></tr>{% endif %}
     </tbody></table>
