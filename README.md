@@ -53,6 +53,24 @@ Datas e horas usam o fuso `America/Sao_Paulo`.
 - **Repetir** (um ou todos): volta para a fila.
 - **Cancelar** (com motivo): libera o período, que vira lacuna no painel e pode entrar em um novo pedido.
 
+**Importação para o Delta.** Quando a tabela tem destino no Databricks, a SP gera o `.dat` e o subbloco fica
+`EXPORTED`. O Job **`nzexport-importer`** (notebook `src/importar_dat.py`) é disparado pelo dispatcher e pelo app. Ele
+carrega o arquivo na tabela destino e apaga o `.dat`, e o subbloco fica `DONE`. Regras:
+- **Append puro**, sem validação de período ou conteúdo. O app garante que os subblocos não se sobrepõem. Só a
+  estrutura é conferida: o header precisa bater com as colunas da tabela, e uma linha ilegível aborta (`FAILFAST`).
+- **Erro**: o período do subbloco é **limpo** na tabela destino, o `.dat` vai para a pasta de erro e o subbloco fica
+  `IMPORT_FAILED`, o que **libera o período** para um novo pedido (aparece como lacuna).
+- **Reprocessamento**: o período é limpo no destino antes do append.
+- **Retomada**: se o commit do subbloco já está no histórico Delta (`userMetadata = nzexport:<subbloco>`), ele só
+  conclui, sem carregar de novo.
+- **Concorrência**: no máximo uma importação por tabela destino ao mesmo tempo. Tabelas diferentes rodam em
+  paralelo, até o limite da conexão.
+- **Código de leitura**: a leitura, a limpeza do DAT (3 regex do cliente, modo `CLIENTE`) e o diagnóstico de erros
+  vêm do motor PLHDWA (`src/nzexport/motor_dat.py`, com as origens e os ajustes documentados no topo).
+- **Configuração**: landing (caminho S3 ou volume, pastas do `.dat`, de erro e de limpeza) em **Conexão Netezza**.
+  Formato do arquivo e destino no **cadastro da tabela**.
+- **Teste ponta a ponta**: `scripts/teste_importacao.py`, com Job real e ambiente temporário removido no fim.
+
 **Estados do subbloco.**
 - `PENDING → RUNNING → DONE` é o caminho normal.
 - `FAILED` indica erro da procedure ou de conexão, depois de esgotar os retries automáticos. Aguarda repetir ou

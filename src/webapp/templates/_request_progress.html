@@ -4,7 +4,7 @@
     <h2>Progresso</h2>
     <small class="muted">{% if dispatcher %}dispatcher ativo · run {{ dispatcher.run_id }}{% else %}dispatcher parado{% endif %} · atualizado {{ now_str if now_str is defined else '' }}</small>
   </div>
-  {{ progress(totals.done, totals.total - totals.canceled, totals.failed + totals.unknown, totals.running + totals.exported + totals.importing) }}
+  {{ progress(totals.done, totals.total - totals.canceled + totals.import_failed, totals.failed + totals.unknown + totals.import_failed, totals.running + totals.exported + totals.importing) }}
   <div class="stats">
     <span><b>{{ totals.running }}</b> executando</span><span><b>{{ totals.pending }}</b> pendentes</span>
     <span><b>{{ totals.exported + totals.importing }}</b> exportados aguardando/em importação</span>
@@ -22,7 +22,7 @@
               {% if x.request_id %}<a href="{{ url_for('request_detail', request_id=x.request_id) }}">{{ x.request_name }}</a>{% else %}{{ x.request_name }}{% endif %}</small><br>{% endfor %}
           </details>{% endif %}</td>
         <td>{{ t.subblock_size }} {{ UNIT_LABEL[t.subblock_unit] }}</td>
-        <td style="min-width:200px">{{ progress(t.done, t.total - t.canceled, t.failed + t.unknown, t.running + t.exported + t.importing) }}</td>
+        <td style="min-width:200px">{{ progress(t.done, t.total - t.canceled + t.import_failed, t.failed + t.unknown + t.import_failed, t.running + t.exported + t.importing) }}</td>
         <td>{{ t.running }}</td><td>{{ t.pending }}</td><td>{{ t.failed }}</td><td>{{ t.unknown }}</td></tr>
     {% endfor %}</tbody>
   </table>
@@ -40,11 +40,12 @@
     </form>
   </div>
   <table class="grid compact">
-    <thead><tr><th>Tabela</th><th>#</th><th>data_ini</th><th>data_fim</th><th>Status</th><th>Tent.</th><th>Início</th><th>Duração</th><th>Próx. tentativa</th><th>Erro</th><th></th></tr></thead>
+    <thead><tr><th>Tabela</th><th>#</th><th>data_ini</th><th>data_fim</th><th>Status</th><th>Tent.</th><th>Linhas</th><th>Início</th><th>Duração</th><th>Próx. tentativa</th><th>Erro</th><th></th></tr></thead>
     <tbody>{% for s in subblocks %}
       <tr class="{{ 'hl' if s.status == 'RUNNING' }}">
         <td>{{ s.table_config_id }}</td><td>{{ s.seq }}</td><td class="nowrap">{{ s.data_ini }}</td><td class="nowrap">{{ s.data_fim }}</td>
-        <td>{{ badge(s.status) }}</td><td>{{ s.attempts }}</td>
+        <td>{{ badge(s.status) }}</td><td>{{ s.attempts }}{% if s.import_attempts %}<small class="muted"> · imp. {{ s.import_attempts }}</small>{% endif %}</td>
+        <td><small>{{ '{:,}'.format(s.rows_loaded).replace(',', '.') if s.rows_loaded is not none else '—' }}</small></td>
         <td class="nowrap"><small>{{ s.started_at|dt }}</small></td>
         <td><small>{{ s.started_at|dur(s.finished_at) if s.started_at else '—' }}</small></td>
         <td><small>{{ s.next_attempt_at|dt }}</small></td>
@@ -59,6 +60,6 @@
             <input type="hidden" name="reason"><button class="btn danger small">cancelar</button></form>
           {% endif %}</td>
       </tr>
-    {% else %}<tr><td colspan="11" class="empty">Nenhum subbloco.</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="12" class="empty">Nenhum subbloco.</td></tr>{% endfor %}</tbody>
   </table>
 </div>

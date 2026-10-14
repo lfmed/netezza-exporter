@@ -8,3 +8,5 @@ env:
     valueFrom: conn-test-job
   - name: NETEZZA_SECRET_SCOPE
     value: "nzexport-netezza"
+  - name: IMPORTER_JOB_ID
+    valueFrom: importer-job

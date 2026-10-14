@@ -19,6 +19,7 @@ from databricks.sdk import WorkspaceClient
 from .db import Database
 from .procedure import (CallSpec, ConfigError, ConnectError, OutcomeUnknown, ProcedureError, build_call,
                         build_client)
+from . import lifecycle
 from .repo import log_event
 
 log = logging.getLogger("nzexport.dispatcher")
@@ -43,6 +44,7 @@ class Work:
     data_fim: date
     max_retries: int
     retry_unknown: bool
+    file_name: str | None = None     # .dat que a procedure gera (None = sem importação)
 
 
 def _backoff_sql(attempts: int) -> str:
@@ -52,7 +54,8 @@ def _backoff_sql(attempts: int) -> str:
 
 class Dispatcher:
     def __init__(self, db: Database, run_id: int, w: WorkspaceClient | None = None, job_id: int | None = None,
-                 idle_exit_s: int = 120, max_runtime_s: int = 12 * 3600, poll_s: float = 5.0):
+                 idle_exit_s: int = 120, max_runtime_s: int = 12 * 3600, poll_s: float = 5.0,
+                 importer_job_id: int | None = None):
         self.db = db
         self.run_id = run_id
         self.owner = f"run-{run_id}"
@@ -65,6 +68,9 @@ class Dispatcher:
         self.in_flight: dict[str, Work] = {}
         self.lock = threading.Lock()
         self._clients: dict[str, tuple[float, object]] = {}
+        self.importer_job_id = importer_job_id
+        self._import_due = False
+        self._last_import_trigger = 0.0
 
     # ------------------------------------------------------------ ciclo principal
     def run(self) -> dict:
@@ -78,6 +84,7 @@ class Dispatcher:
                 self._reap_expired(stats)
                 self._finalize_requests()
                 self._fire_hooks()
+                self._trigger_importer()
                 draining = time.time() - started > self.max_runtime_s
                 if not draining:
                     free = MAX_WORKERS - len(self.in_flight)
@@ -102,6 +109,7 @@ class Dispatcher:
             self.pool.shutdown(wait=True)
             self._finalize_requests()
             self._fire_hooks()
+            self._trigger_importer(force=True)
             self._finish()
         if self._has_future_work() and self.w and self.job_id:
             # tempo máximo atingido com trabalho restante: agenda a continuação (fila do job)
@@ -113,7 +121,7 @@ class Dispatcher:
     # ------------------------------------------------------------ registro do run
     def _register(self):
         with self.db.tx() as conn:
-            conn.execute("""INSERT INTO dispatcher_run (run_id) VALUES (%s)
+            conn.execute("""INSERT INTO dispatcher_run (run_id, kind) VALUES (%s, 'dispatcher')
                             ON CONFLICT (run_id) DO UPDATE SET heartbeat_at = now(), finished_at = NULL,
                             status = 'RUNNING'""", (self.run_id,))
 
@@ -154,7 +162,7 @@ class Dispatcher:
                        lower(s.data_range) AS data_ini, upper(s.data_range) - 1 AS data_fim,
                        r.max_parallel AS req_max, tc.source_id, v.max_parallel AS tbl_max,
                        v.call_profile, v.procedure_name, v.source_database, v.source_table, v.ext_database,
-                       v.ext_schema, v.time_column, v.date_format,
+                       v.ext_schema, v.time_column, v.date_format, v.dest_catalog, v.dest_schema, v.dest_table,
                        v.call_timeout_min, v.max_retries, v.retry_unknown
                 FROM export_subblock s
                 JOIN export_request r USING (request_id)
@@ -205,9 +213,11 @@ class Dispatcher:
                     VALUES (%s,%s,%s,%s,'RUNNING',%s,%s) RETURNING attempt_id""",
                     (c["subblock_id"], attempt_no, self.run_id, self.owner,
                      spec.describe() if spec else None, spec.output_object if spec else None)).fetchone()
+                has_dest = bool(c["dest_catalog"] and c["dest_schema"] and c["dest_table"])
+                file_name = (spec.extra.get("data_object", "").rsplit("/", 1)[-1] or None) if spec and has_dest else None
                 work = Work(str(c["subblock_id"]), str(c["request_id"]), str(c["request_table_id"]),
                             c["table_config_id"], c["source_id"], attempt_no, str(att["attempt_id"]),
-                            spec, c["data_ini"], c["data_fim"], c["max_retries"], c["retry_unknown"])
+                            spec, c["data_ini"], c["data_fim"], c["max_retries"], c["retry_unknown"], file_name)
                 if config_error:
                     # cadastro inválido: falha definitiva sem chamar o Netezza
                     self._complete(work, "FAILED", "CONFIG", config_error, conn=conn)
@@ -277,9 +287,14 @@ class Dispatcher:
         # condicional ao número da tentativa: se o reaper marcou UNKNOWN, o resultado real prevalece
         guard = "WHERE subblock_id = %s AND attempts = %s AND status IN ('RUNNING','UNKNOWN')"
         if outcome == "SUCCEEDED":
-            conn.execute(f"""UPDATE export_subblock SET status = 'DONE', finished_at = now(), last_error = NULL,
+            # com destino no Databricks, o subbloco aguarda o importador; sem destino, termina aqui
+            status = "EXPORTED" if work.file_name else "DONE"
+            conn.execute(f"""UPDATE export_subblock SET status = %s, file_name = %s, exported_at = now(),
+                             finished_at = now(), last_error = NULL, import_attempts = 0,
                              lease_owner = NULL, lease_expires_at = NULL, updated_at = now() {guard}""",
-                         (work.subblock_id, work.attempt_no))
+                         (status, work.file_name, work.subblock_id, work.attempt_no))
+            if work.file_name:
+                self._import_due = True
             return
         retry = (work.attempt_no <= work.max_retries and err_class != "CONFIG"
                  and (outcome == "FAILED" or work.retry_unknown))
@@ -323,85 +338,25 @@ class Dispatcher:
                           r["subblock_id"])
                 stats["reaped"] += 1
 
-    def _finalize_requests(self):
-        with self.db.tx() as conn:
-            rows = conn.execute("""
-                SELECT r.request_id, r.status, (r.deadline_at IS NOT NULL AND r.deadline_at <= now()) AS expired,
-                       c.running, c.pending, c.bad, c.done, c.canceled
-                FROM export_request r
-                CROSS JOIN LATERAL (
-                  SELECT count(*) FILTER (WHERE s.status = 'RUNNING') AS running,
-                         count(*) FILTER (WHERE s.status = 'PENDING') AS pending,
-                         count(*) FILTER (WHERE s.status IN ('FAILED','UNKNOWN')) AS bad,
-                         count(*) FILTER (WHERE s.status = 'DONE') AS done,
-                         count(*) FILTER (WHERE s.status = 'CANCELED') AS canceled
-                  FROM export_subblock s WHERE s.request_id = r.request_id) c
-                WHERE r.status IN ('SUBMITTED','RUNNING','STOPPING')
-                FOR UPDATE OF r SKIP LOCKED""").fetchall()
-            for r in rows:
-                new, reason = None, None
-                if r["running"] > 0:
-                    continue
-                if r["status"] == "STOPPING":
-                    new, reason = "STOPPED", "parado pelo usuário"
-                elif r["pending"] == 0:
-                    new = "COMPLETED" if r["bad"] == 0 else "FAILED"
-                    reason = (f"{r['bad']} subbloco(s) com falha ou estado desconhecido" if new == "FAILED" else
-                              f"{r['canceled']} subbloco(s) cancelado(s)" if r["canceled"] else None)
-                elif r["expired"]:
-                    new, reason = "STOPPED", "janela operacional encerrada"
-                if new:
-                    conn.execute("""UPDATE export_request SET status = %s, status_reason = %s, finished_at = now(),
-                                    updated_at = now() WHERE request_id = %s""", (new, reason, r["request_id"]))
-                    log_event(conn, r["request_id"], f"REQUEST_{new}", ACTOR,
-                              {"done": r["done"], "bad": r["bad"], "pending": r["pending"], "reason": reason})
+    def _trigger_importer(self, force: bool = False):
+        """Arquivos exportados: garante o importador rodando (no máximo uma tentativa a cada 30 s)."""
+        if not (self._import_due and self.w and self.importer_job_id):
+            return
+        if not force and time.time() - self._last_import_trigger < 30:
+            return
+        self._last_import_trigger = time.time()
+        try:
+            if lifecycle.ensure_importer(self.db, self.w, self.importer_job_id):
+                log.info("importador disparado")
+            self._import_due = False
+        except Exception:  # noqa: BLE001 - o agendador do app também dispara o importador
+            log.exception("falha ao disparar o importador")
 
-    # ------------------------------------------------------------ hooks
+    def _finalize_requests(self):
+        lifecycle.finalize_requests(self.db)
+
     def _fire_hooks(self):
-        due = self.db.query("""
-            WITH rt_done AS (
-              SELECT p.request_id, p.request_table_id, p.table_config_id, p.period_start, p.period_end,
-                     p.last_finished_at
-              FROM v_request_table_progress p
-              -- só dispara com a tabela inteira concluída (subbloco cancelado = período não exportado)
-              WHERE p.total > p.canceled AND p.done = p.total - p.canceled AND p.canceled_only = 0)
-            SELECT h.hook_id, h.job_id, h.trigger_level, d.request_id, d.request_table_id, d.table_config_id,
-                   d.period_start, d.period_end
-            FROM post_export_hook h JOIN rt_done d
-              ON h.trigger_level = 'REQUEST_TABLE' AND (h.table_config_id IS NULL OR h.table_config_id = d.table_config_id)
-            -- só cargas concluídas depois da criação do hook (não dispara retroativamente)
-            WHERE h.enabled AND d.last_finished_at >= h.created_at
-            UNION ALL
-            SELECT h.hook_id, h.job_id, h.trigger_level, r.request_id, NULL, NULL, NULL, NULL
-            FROM post_export_hook h JOIN export_request r ON r.status = 'COMPLETED'
-            WHERE h.enabled AND h.trigger_level = 'REQUEST' AND r.finished_at >= h.created_at
-              AND (h.table_config_id IS NULL OR EXISTS (SELECT 1 FROM export_request_table rt
-                   WHERE rt.request_id = r.request_id AND rt.table_config_id = h.table_config_id))
-        """)
-        for d in due:
-            with self.db.tx() as conn:
-                inv = conn.execute("""
-                    INSERT INTO hook_invocation (hook_id, request_id, request_table_id, status)
-                    VALUES (%s,%s,%s,'TRIGGERED') ON CONFLICT DO NOTHING RETURNING invocation_id""",
-                    (d["hook_id"], d["request_id"], d["request_table_id"])).fetchone()
-            if inv is None:
-                continue
-            params = {"request_id": str(d["request_id"]), "trigger_level": d["trigger_level"],
-                      "request_table_id": str(d["request_table_id"] or ""),
-                      "table_config_id": d["table_config_id"] or "",
-                      "data_ini": str(d["period_start"] or ""), "data_fim": str(d["period_end"] or "")}
-            try:
-                run = self.w.jobs.run_now(job_id=d["job_id"], job_parameters=params)
-                with self.db.tx() as conn:
-                    conn.execute("UPDATE hook_invocation SET job_run_id = %s WHERE invocation_id = %s",
-                                 (run.run_id, inv["invocation_id"]))
-                    log_event(conn, d["request_id"], "HOOK_TRIGGERED", ACTOR,
-                              {"hook_id": d["hook_id"], "job_id": d["job_id"], "run_id": run.run_id, **params})
-            except Exception as e:  # noqa: BLE001 - falha no hook não afeta a exportação
-                with self.db.tx() as conn:
-                    conn.execute("UPDATE hook_invocation SET status = 'FAILED', error_message = %s "
-                                 "WHERE invocation_id = %s", (str(e)[:2000], inv["invocation_id"]))
-                    log_event(conn, d["request_id"], "HOOK_FAILED", ACTOR, {"hook_id": d["hook_id"], "error": str(e)[:500]})
+        lifecycle.fire_hooks(self.db, self.w)
 
 
 def to_json(stats: dict) -> str:

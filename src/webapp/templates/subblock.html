@@ -11,6 +11,8 @@
   <dt>data_ini</dt><dd>{{ sb.data_ini }}</dd><dt>data_fim (inclusiva)</dt><dd>{{ sb.data_fim }}</dd>
   <dt>Tentativas</dt><dd>{{ sb.attempts }}</dd>
   <dt>Lease</dt><dd>{{ sb.lease_owner or '—' }} {% if sb.lease_expires_at %}até {{ sb.lease_expires_at|dt }}{% endif %}</dd>
+  {% if sb.file_name %}<dt>Arquivo</dt><dd><code>{{ sb.file_name }}</code></dd>{% endif %}
+  {% if sb.rows_loaded is not none %}<dt>Carregado</dt><dd>{{ '{:,}'.format(sb.rows_loaded).replace(',', '.') }} linha(s) · versão Delta {{ sb.delta_version }} · {{ sb.loaded_at|dt }}</dd>{% endif %}
   <dt>Último erro</dt><dd><small class="bad-text">{{ sb.last_error or '—' }}</small></dd>
 </dl></div>
 <div class="card">
@@ -36,6 +38,10 @@
     <label>Motivo do cancelamento<input name="reason" required></label>
     <div class="actions" style="margin-top:8px"><button class="btn danger">Cancelar subbloco</button></div>
   </form>
+  {% elif sb.status == 'IMPORT_FAILED' %}
+  <p class="hint">A importação falhou: o período foi <b>limpo na tabela destino</b>, o <code>.dat</code> foi movido para a pasta de erro e o período ficou
+    <b>livre</b>. Ele aparece como lacuna no painel; para executar de novo, crie um <b>novo pedido</b> (ou use "Criar pedido para as lacunas").</p>
+  <a class="btn ghost" href="{{ url_for('coverage_detail', table_config_id=sb.table_config_id) }}">Ver lacunas da tabela</a>
   {% elif sb.status == 'CANCELED' %}
   <p class="hint">Cancelado: decisão definitiva neste pedido, sem repetir nem reprocessar aqui. O período ficou livre e
     aparece como <b>lacuna</b> no painel; para executá-lo, crie um <b>novo pedido</b> (ou use "Criar pedido para as lacunas").</p>
@@ -52,4 +58,15 @@
   <td><small class="bad-text">{% if a.error_class %}[{{ a.error_class }}] {% endif %}{{ a.error_message or '' }}</small></td></tr>
 {% else %}<tr><td colspan="7" class="empty">Nenhuma tentativa.</td></tr>{% endfor %}
 </tbody></table></div>
+{% if imports %}
+<div class="card"><h2>Importações para o Delta</h2>
+<table class="grid compact"><thead><tr><th>#</th><th>Status</th><th>Run</th><th>Arquivo</th><th>Destino</th><th>Linhas</th><th>Início</th><th>Duração</th><th>Detalhe / erro</th></tr></thead><tbody>
+{% for a in imports %}<tr><td>{{ a.attempt_no }}</td><td>{{ badge(a.status) }}</td><td>{{ a.databricks_run_id }}</td>
+  <td><small><code>{{ a.file_path }}</code>{% if a.file_size %}<br>{{ '{:,}'.format(a.file_size).replace(',', '.') }} bytes{% endif %}{% if a.moved_to %}<br>→ erro: <code>{{ a.moved_to }}</code>{% endif %}</small></td>
+  <td><small><code>{{ a.dest_table }}</code>{% if a.delta_version is not none %}<br>versão {{ a.delta_version }}{% endif %}</small></td>
+  <td>{{ a.rows_inserted if a.rows_inserted is not none else '—' }}{% if a.rows_cleaned %}<br><small class="muted">{{ a.rows_cleaned }} removida(s)</small>{% endif %}</td>
+  <td class="nowrap"><small>{{ a.started_at|dt }}</small></td><td><small>{{ a.started_at|dur(a.finished_at) }}</small></td>
+  <td><small>{% if a.error_class %}<span class="bad-text">[{{ a.error_class }}] {{ a.error_message }}</span><br>{% endif %}<span class="muted">{{ a.detail or '' }}</span></small></td></tr>
+{% endfor %}</tbody></table></div>
+{% endif %}
 {% endblock %}

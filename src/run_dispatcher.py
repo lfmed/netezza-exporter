@@ -24,6 +24,7 @@ def main():
     p.add_argument("--idle-exit-s", type=int, default=120)
     p.add_argument("--max-runtime-min", type=int, default=720)
     p.add_argument("--grant-role", default="", help="roles (vírgula) que recebem acesso ao schema")
+    p.add_argument("--importer-job-id", default="")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     version_file = os.path.join(os.path.dirname(os.path.abspath(inspect.currentframe().f_code.co_filename)), "VERSION")
@@ -35,7 +36,8 @@ def main():
     db = Database(cfg, min_size=2, max_size=16)
     try:
         Dispatcher(db, run_id=a.run_id, w=w, job_id=a.job_id, idle_exit_s=a.idle_exit_s,
-                   max_runtime_s=a.max_runtime_min * 60).run()
+                   max_runtime_s=a.max_runtime_min * 60,
+                   importer_job_id=int(a.importer_job_id) if a.importer_job_id else None).run()
     finally:
         db.close()
 

@@ -397,7 +397,8 @@ def create_app() -> Flask:
                        WHERE subblock_id = %s""", (subblock_id,))
         if not sb:
             abort(404)
-        return render_template("subblock.html", sb=sb, attempts=repo.subblock_attempts(db, subblock_id))
+        return render_template("subblock.html", sb=sb, attempts=repo.subblock_attempts(db, subblock_id),
+                               imports=repo.subblock_import_attempts(db, subblock_id))
 
     @app.post("/subblocks/<subblock_id>/retry")
     def subblock_retry(subblock_id):

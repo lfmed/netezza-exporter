@@ -6,7 +6,7 @@ import time
 
 from databricks.sdk import WorkspaceClient
 
-from nzexport import repo
+from nzexport import lifecycle, repo
 from nzexport.db import Database, LakebaseConfig
 
 log = logging.getLogger("nzexport.app")
@@ -118,6 +118,11 @@ def _scheduler_tick():
             run_id = ensure_dispatcher()
             if run_id:
                 repo.log_event(conn, None, "DISPATCHER_AUTO_TRIGGERED", "agendador-app", {"run_id": run_id})
+        imp = os.environ.get("IMPORTER_JOB_ID")
+        if imp and lifecycle.import_due(conn):
+            run_id = lifecycle.ensure_importer(db(), workspace(), int(imp))
+            if run_id:
+                repo.log_event(conn, None, "IMPORTER_AUTO_TRIGGERED", "agendador-app", {"run_id": run_id})
 
 
 def start_scheduler(interval_s: int = 60):

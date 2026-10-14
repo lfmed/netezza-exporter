@@ -1,4 +1,5 @@
 """Formato do .dat por tabela. Vazio = padrão do motor PLHDWA (mesmo formato do Netezza do cliente)."""
+import re
 
 # chave: (padrão, rótulo, ajuda)
 FILE_OPTIONS = {
@@ -42,3 +43,23 @@ def clean(form_values: dict) -> dict:
         if v != default:
             out[k] = v
     return out
+
+
+_NOME = re.compile(r"[A-Za-z0-9_]+")
+
+
+def predicado_periodo(coluna: str, tipo: str, ini: str, fim: str) -> str:
+    """Filtro SQL do período do subbloco (ini/fim AAAAMMDD, inclusivos) conforme o tipo da coluna de tempo,
+    como no PLHDWA: DATE, texto ou numérico (AAAAMMDD); timestamp cobre o dia final inteiro."""
+    if not (_NOME.fullmatch(coluna or "") and re.fullmatch(r"\d{8}", ini) and re.fullmatch(r"\d{8}", fim)):
+        raise ValueError(f"período/coluna inválidos: {coluna!r} {ini}..{fim}")
+    c = f"`{coluna}`"
+    d = lambda x: f"{x[:4]}-{x[4:6]}-{x[6:]}"  # noqa: E731
+    t = (tipo or "").lower()
+    if t == "date":
+        return f"{c} BETWEEN DATE'{d(ini)}' AND DATE'{d(fim)}'"
+    if t.startswith("timestamp"):
+        return f"{c} >= TIMESTAMP'{d(ini)} 00:00:00' AND {c} < TIMESTAMP'{d(fim)} 00:00:00' + INTERVAL 1 DAY"
+    if t in ("string", "varchar", "char") or t.startswith(("varchar", "char")):
+        return f"{c} BETWEEN '{ini}' AND '{fim}'"
+    return f"{c} BETWEEN {int(ini)} AND {int(fim)}"

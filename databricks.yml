@@ -53,6 +53,8 @@ resources:
               - "{{job.parameters.max_runtime_min}}"
               - --grant-role
               - "{{job.parameters.grant_role}}"
+              - --importer-job-id
+              - "${resources.jobs.nzexport_importer.id}"
           timeout_seconds: 0
       environments:
         - environment_key: default
@@ -60,6 +62,39 @@ resources:
             environment_version: "3"
             dependencies:
               - nzpy>=1.15
+              - psycopg[binary]>=3.2
+              - psycopg-pool>=3.2
+              - databricks-sdk>=0.81
+
+    nzexport_importer:
+      name: nzexport-importer
+      description: Importa o .dat de cada subbloco exportado na tabela destino (Delta), apaga o arquivo; em erro limpa o período e move o .dat para a pasta de erro.
+      max_concurrent_runs: 1
+      queue:
+        enabled: true
+      parameters:
+        - name: lakebase_endpoint
+          default: ${var.lakebase_endpoint}
+        - name: idle_exit_s
+          default: "120"
+        - name: max_runtime_min
+          default: "720"
+      tasks:
+        - task_key: importar
+          environment_key: default
+          notebook_task:
+            notebook_path: ./src/importar_dat.py
+            base_parameters:
+              lakebase_endpoint: "{{job.parameters.lakebase_endpoint}}"
+              run_id: "{{job.run_id}}"
+              idle_exit_s: "{{job.parameters.idle_exit_s}}"
+              max_runtime_min: "{{job.parameters.max_runtime_min}}"
+          timeout_seconds: 0
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "3"
+            dependencies:
               - psycopg[binary]>=3.2
               - psycopg-pool>=3.2
               - databricks-sdk>=0.81
@@ -111,6 +146,10 @@ resources:
         - name: conn-test-job
           job:
             id: ${resources.jobs.nzexport_conn_test.id}
+            permission: CAN_MANAGE_RUN
+        - name: importer-job
+          job:
+            id: ${resources.jobs.nzexport_importer.id}
             permission: CAN_MANAGE_RUN
 
 targets:

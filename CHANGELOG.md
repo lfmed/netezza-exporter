@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.004 — 2026-10-14
+- Job importador nzexport-importer: carrega o .dat de cada subbloco exportado na tabela destino por append (leitura/limpeza do motor PLHDWA), apaga o arquivo; em erro limpa o período no destino, move o .dat para erro/ e libera o subbloco; retomada pelo histórico Delta; 1 importação por tabela destino; dispatcher e app disparam o importador; telas com as importações e linhas carregadas.
+
 ## 1.003 — 2026-10-14
 - Configuração da importação: caminho da landing (S3 ou volume) e pastas do .dat, de erro e de limpeza na tela da conexão, importações simultâneas e espera pelo arquivo; formato do .dat no cadastro da tabela (padrões do PLHDWA); estados EXPORTED/IMPORTING/IMPORT_FAILED e histórico de importação no banco.
 

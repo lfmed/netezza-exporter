@@ -388,13 +388,18 @@ def request_subblocks(db: Database, request_id: str, status: str | None = None, 
         LEFT JOIN LATERAL (SELECT databricks_run_id, error_class FROM export_attempt
                            WHERE subblock_id = s.subblock_id ORDER BY attempt_no DESC LIMIT 1) a ON true
         WHERE s.request_id = %s {extra}
-        ORDER BY CASE s.status WHEN 'RUNNING' THEN 0 WHEN 'UNKNOWN' THEN 1 WHEN 'FAILED' THEN 2
+        ORDER BY CASE s.status WHEN 'RUNNING' THEN 0 WHEN 'IMPORTING' THEN 0 WHEN 'EXPORTED' THEN 1
+                 WHEN 'UNKNOWN' THEN 1 WHEN 'FAILED' THEN 2 WHEN 'IMPORT_FAILED' THEN 2
                  WHEN 'PENDING' THEN 3 ELSE 4 END, rt.ordinal, lower(s.data_range) DESC
         LIMIT %s""", params)
 
 
 def subblock_attempts(db: Database, subblock_id: str):
     return db.query("SELECT * FROM export_attempt WHERE subblock_id = %s ORDER BY attempt_no DESC", (subblock_id,))
+
+
+def subblock_import_attempts(db: Database, subblock_id: str):
+    return db.query("SELECT * FROM export_import_attempt WHERE subblock_id = %s ORDER BY attempt_no DESC", (subblock_id,))
 
 
 def request_events(db: Database, request_id: str, limit: int = 200):
@@ -595,7 +600,12 @@ def gap_rows(db: Database, table_ids: list[str]) -> list[dict]:
 
 
 def live_dispatcher(db: Database):
-    return db.one("""SELECT * FROM dispatcher_run WHERE finished_at IS NULL
+    return db.one("""SELECT * FROM dispatcher_run WHERE kind = 'dispatcher' AND finished_at IS NULL
+                     AND heartbeat_at > now() - interval '3 minutes' ORDER BY started_at DESC LIMIT 1""")
+
+
+def live_importer(db: Database):
+    return db.one("""SELECT * FROM dispatcher_run WHERE kind = 'importer' AND finished_at IS NULL
                      AND heartbeat_at > now() - interval '3 minutes' ORDER BY started_at DESC LIMIT 1""")
 
 
