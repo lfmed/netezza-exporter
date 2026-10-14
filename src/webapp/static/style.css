@@ -141,3 +141,5 @@ details summary { cursor: pointer; color: var(--teal-d); margin: 8px 0; font-wei
 .uc-cols li { padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .uc-cols li:hover { background: #eef5f3; } .uc-cols li.on { background: var(--teal); color: #04231f; font-weight: 700; }
 .uc-cols li.uc-err { color: var(--red); white-space: normal; cursor: default; }
+.s-exported { background: #e0edf7; color: #2a577a; } .s-importing { background: #dbe9ff; color: #1e40af; }
+.s-import_failed { background: #f7ede0; color: #7a562a; }

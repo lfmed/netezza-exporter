@@ -4,11 +4,13 @@
     <h2>Progresso</h2>
     <small class="muted">{% if dispatcher %}dispatcher ativo · run {{ dispatcher.run_id }}{% else %}dispatcher parado{% endif %} · atualizado {{ now_str if now_str is defined else '' }}</small>
   </div>
-  {{ progress(totals.done, totals.total - totals.canceled, totals.failed + totals.unknown, totals.running) }}
+  {{ progress(totals.done, totals.total - totals.canceled, totals.failed + totals.unknown, totals.running + totals.exported + totals.importing) }}
   <div class="stats">
     <span><b>{{ totals.running }}</b> executando</span><span><b>{{ totals.pending }}</b> pendentes</span>
+    <span><b>{{ totals.exported + totals.importing }}</b> exportados aguardando/em importação</span>
     <span><b>{{ totals.done }}</b> concluídos</span><span class="bad-text"><b>{{ totals.failed }}</b> falhos</span>
-    <span class="warn-text"><b>{{ totals.unknown }}</b> desconhecidos</span><span class="muted"><b>{{ totals.canceled }}</b> cancelados/substituídos</span>
+    <span class="warn-text"><b>{{ totals.unknown }}</b> desconhecidos</span>{% if totals.import_failed %}<span class="warn-text"><b>{{ totals.import_failed }}</b> com falha na importação (liberados)</span>{% endif %}
+    <span class="muted"><b>{{ totals.canceled - totals.import_failed }}</b> cancelados/substituídos</span>
   </div>
   <table class="grid">
     <thead><tr><th>#</th><th>Tabela</th><th>Período</th><th>Subbloco</th><th>Progresso</th><th>Exec.</th><th>Pend.</th><th>Falhos</th><th>Desc.</th></tr></thead>
@@ -20,7 +22,7 @@
               {% if x.request_id %}<a href="{{ url_for('request_detail', request_id=x.request_id) }}">{{ x.request_name }}</a>{% else %}{{ x.request_name }}{% endif %}</small><br>{% endfor %}
           </details>{% endif %}</td>
         <td>{{ t.subblock_size }} {{ UNIT_LABEL[t.subblock_unit] }}</td>
-        <td style="min-width:200px">{{ progress(t.done, t.total - t.canceled, t.failed + t.unknown, t.running) }}</td>
+        <td style="min-width:200px">{{ progress(t.done, t.total - t.canceled, t.failed + t.unknown, t.running + t.exported + t.importing) }}</td>
         <td>{{ t.running }}</td><td>{{ t.pending }}</td><td>{{ t.failed }}</td><td>{{ t.unknown }}</td></tr>
     {% endfor %}</tbody>
   </table>
@@ -32,7 +34,7 @@
     <form method="get" class="inline">
       <select name="sb_status" onchange="this.form.submit()">
         <option value="">Todos</option>
-        {% for s in ['RUNNING','PENDING','FAILED','UNKNOWN','DONE','CANCELED','SUPERSEDED'] %}
+        {% for s in ['RUNNING','EXPORTED','IMPORTING','PENDING','FAILED','UNKNOWN','IMPORT_FAILED','DONE','CANCELED','SUPERSEDED'] %}
         <option value="{{ s }}" {{ 'selected' if sb_status == s }}>{{ STATUS_LABEL[s] }}</option>{% endfor %}
       </select>
     </form>

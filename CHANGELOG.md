@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.003 — 2026-10-14
+- Configuração da importação: caminho da landing (S3 ou volume) e pastas do .dat, de erro e de limpeza na tela da conexão, importações simultâneas e espera pelo arquivo; formato do .dat no cadastro da tabela (padrões do PLHDWA); estados EXPORTED/IMPORTING/IMPORT_FAILED e histórico de importação no banco.
+
 ## 1.002 — 2026-10-14
 - Destino no Databricks no cadastro da tabela (catálogo, schema e tabela do Unity Catalog) com navegador do catálogo no app, conferência da tabela (existe, tipo, colunas, coluna de tempo) e colunas de destino no CSV.
 

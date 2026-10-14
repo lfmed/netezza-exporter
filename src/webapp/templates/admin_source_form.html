@@ -58,6 +58,25 @@
   </div>
 </div>
 
+<div class="card">
+  <h2>📂 Landing dos arquivos (.dat)</h2>
+  <p class="hint" style="margin-top:0">Onde o datasource do Netezza (<code>PLH_DATASOURCE_DWA</code>) grava os arquivos e de onde o importador lê.
+    A SP grava em <code>DATAOBJECT '/tmp/&lt;TABELA&gt;_&lt;ini&gt;_&lt;fim&gt;.dat'</code>: o arquivo fica em <code>&lt;caminho&gt;/&lt;pasta do .dat&gt;/</code>.</p>
+  <div class="row">
+    <label class="grow">Caminho da landing<input name="landing_root" value="{{ s.landing_root or '' if s else '' }}" placeholder="s3://bucket/prefixo  ou  /Volumes/catalogo/schema/volume/pasta"></label>
+  </div>
+  <div class="row">
+    <label>Pasta do .dat<input name="landing_dat_folder" value="{{ s.landing_dat_folder if s else 'tmp' }}" style="width:9em"></label>
+    <label>Pasta de erro<input name="landing_error_folder" value="{{ s.landing_error_folder if s else 'erro' }}" style="width:9em"></label>
+    <label>Pasta da limpeza<input name="landing_work_folder" value="{{ s.landing_work_folder if s else 'limpeza' }}" style="width:9em"></label>
+    <label>Importações simultâneas<input type="number" name="max_imports" value="{{ s.max_imports if s else 4 }}" min="1" max="50" style="width:7em"></label>
+    <label>Espera pelo arquivo (min)<input type="number" name="file_wait_min" value="{{ s.file_wait_min if s else 10 }}" min="0" max="1440" style="width:7em"></label>
+  </div>
+  {% if s and s.landing_root %}<p class="hint">Exemplo: <code>{{ s.landing_root }}/{{ s.landing_dat_folder }}/FATO_VENDAS_20160101_20160131.dat</code> · com erro vai para <code>{{ s.landing_root }}/{{ s.landing_error_folder }}/</code></p>{% endif %}
+  <p class="hint">No S3, o acesso passa por uma <b>external location</b> do Unity Catalog cobrindo o caminho, com <code>READ FILES</code> e <code>WRITE FILES</code> para a identidade dos jobs
+    (o importador apaga o .dat depois da carga e move para a pasta de erro quando falha). Importações da mesma tabela destino rodam uma de cada vez.</p>
+</div>
+
 <div class="actions end"><a class="btn ghost" href="{{ url_for('admin') }}">Voltar</a><button class="btn">Salvar conexão</button></div>
 </form>
 

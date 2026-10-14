@@ -10,8 +10,8 @@ from .db import Database
 from .planner import merge_contiguous, plan_pieces, subtract_ranges
 
 # Status que reservam o período da tabela. FAILED reserva até o usuário repetir ou cancelar;
-# CANCELED/SUPERSEDED liberam o período para um novo pedido.
-LIVE = ("PENDING", "RUNNING", "DONE", "UNKNOWN", "FAILED")
+# CANCELED, SUPERSEDED e IMPORT_FAILED liberam o período para um novo pedido.
+LIVE = ("PENDING", "RUNNING", "EXPORTED", "IMPORTING", "DONE", "UNKNOWN", "FAILED")
 ACTIVE_REQUEST = ("SUBMITTED", "RUNNING")
 TERMINAL_REQUEST = ("STOPPED", "FAILED", "COMPLETED", "CANCELED")
 
@@ -40,7 +40,9 @@ def list_sources(db: Database):
 
 
 CONNECTION_FIELDS = ("display_name", "driver", "host", "port", "database", "security_level", "connect_timeout_s",
-                     "max_sessions", "default_source_database", "default_ext_database", "default_ext_schema")
+                     "max_sessions", "default_source_database", "default_ext_database", "default_ext_schema",
+                     "landing_root", "landing_dat_folder", "landing_error_folder", "landing_work_folder",
+                     "max_imports", "file_wait_min")
 
 
 def get_source(db: Database, source_id: str):
@@ -122,7 +124,8 @@ def get_table(db: Database, table_config_id: str):
 
 
 TABLE_VERSION_FIELDS = ("call_profile", "source_database", "source_table", "ext_database", "ext_schema",
-                        "time_column", "date_format", "procedure_name", "dest_catalog", "dest_schema", "dest_table",
+                        "time_column", "date_format", "procedure_name", "file_options",
+                        "dest_catalog", "dest_schema", "dest_table",
                         "default_subblock_unit",
                         "default_subblock_size", "max_parallel", "call_timeout_min", "max_retries", "retry_unknown",
                         "migration_start", "migration_end", "description")
@@ -136,9 +139,15 @@ def save_table(db: Database, actor: str, table_config_id: str, source_id: str, a
 
 def _save_table(conn, actor: str, table_config_id: str, source_id: str, active: bool, fields: dict,
                 origin: str = "form") -> int:
-    vals = [fields.get(f) for f in TABLE_VERSION_FIELDS]
     cur = conn.execute("SELECT current_version FROM table_config WHERE table_config_id = %s FOR UPDATE",
                        (table_config_id,)).fetchone()
+    if fields.get("file_options") is None:
+        # ex.: importação por CSV: mantém o formato do arquivo da versão atual
+        prev = conn.execute("""SELECT v.file_options FROM table_config tc JOIN table_config_version v
+                               ON v.table_config_id = tc.table_config_id AND v.config_version = tc.current_version
+                               WHERE tc.table_config_id = %s""", (table_config_id,)).fetchone()
+        fields = {**fields, "file_options": prev["file_options"] if prev else {}}
+    vals = [json.dumps(fields.get(f) or {}) if f == "file_options" else fields.get(f) for f in TABLE_VERSION_FIELDS]
     if cur is None:
         version = 1
         conn.execute("INSERT INTO table_config (table_config_id, source_id, active, current_version) "

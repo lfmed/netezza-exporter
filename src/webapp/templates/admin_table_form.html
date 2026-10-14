@@ -59,6 +59,24 @@
       Clique numa tabela para preenchê-la; para uma tabela que ainda vai ser criada, digite o nome.</p>
   </div>
 
+  {% set fo = (t.file_options if t and t.file_options else {}) %}
+  <details class="uc-browser" {{ 'open' if fo }}><summary><b>Formato do arquivo (.dat)</b> <small class="muted">em branco = padrão do PLHDWA{% if fo %} · {{ fo|length }} ajuste(s){% endif %}</small></summary>
+    <div class="row" style="margin-top:10px">
+      {% for k, (default, label, help) in FILE_OPTIONS.items() %}
+        <label title="{{ help }}">{{ label }}
+          {% if k in ('header', 'limpeza') %}
+            <select name="fo_{{ k }}">{% for v in ['true', 'false'] %}<option value="{{ v }}" {{ 'selected' if (fo.get(k) or default) == v }}>{{ 'sim' if v == 'true' else 'não' }}</option>{% endfor %}</select>
+          {% elif k == 'limpeza_modo' %}
+            <select name="fo_{{ k }}">{% for v in CLEAN_MODES %}<option {{ 'selected' if (fo.get(k) or default) == v }}>{{ v }}</option>{% endfor %}</select>
+          {% else %}
+            <input name="fo_{{ k }}" value="{{ fo.get(k, '') }}" placeholder="{{ default if default else '(sem)' }}" style="width:11em">
+          {% endif %}</label>
+      {% endfor %}
+    </div>
+    <p class="hint">Mesmo formato do motor PLHDWA: com a limpeza ligada, o DAT passa pelas 3 regex do cliente e é lido com aspas simples e escape <code>\</code>.
+      Os dados entram por <b>append</b> na tabela destino, sem validação de período ou conteúdo (o app garante os subblocos).</p>
+  </details>
+
   <div class="row">
     <label>Subbloco padrão<span class="nowrap"><input type="number" name="default_subblock_size" min="1" value="{{ t.default_subblock_size if t else 1 }}" style="width:5em">
       <select name="default_subblock_unit">{% for u in UNITS %}<option value="{{ u }}" {{ 'selected' if (t and t.default_subblock_unit == u) or (not t and u == 'MONTH') }}>{{ UNIT_LABEL[u] }}</option>{% endfor %}</select></span></label>

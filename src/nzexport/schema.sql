@@ -35,6 +35,13 @@ ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS default_source_database t
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS default_ext_database text;     -- padrão de p_banco_ext_table
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS default_ext_schema text;       -- padrão de p_esquema_ext_table
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS credentials_set_at timestamptz;
+-- Landing: onde o datasource do Netezza (PLH_DATASOURCE_DWA) grava os .dat e de onde o importador lê
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS landing_root text;          -- s3://bucket/prefixo ou /Volumes/...
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS landing_dat_folder text NOT NULL DEFAULT 'tmp';
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS landing_error_folder text NOT NULL DEFAULT 'erro';
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS landing_work_folder text NOT NULL DEFAULT 'limpeza';
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS max_imports int NOT NULL DEFAULT 4;
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS file_wait_min int NOT NULL DEFAULT 10;
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS credentials_set_by text;
 
 CREATE TABLE IF NOT EXISTS table_config (
@@ -81,6 +88,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 -- Destino no Databricks (Unity Catalog): tabela Delta que recebe o .dat de cada subbloco
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS file_options jsonb NOT NULL DEFAULT '{}'::jsonb;  -- formato do .dat (vazio = padrão PLHDWA)
 ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS dest_catalog text;
 ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS dest_schema text;
 ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS dest_table text;
@@ -146,7 +154,8 @@ CREATE TABLE IF NOT EXISTS export_subblock (
   seq              int  NOT NULL,
   data_range       daterange NOT NULL,   -- semiaberto [ini, fim+1)
   status           text NOT NULL CHECK (status IN
-                   ('PENDING','RUNNING','DONE','FAILED','UNKNOWN','CANCELED','SUPERSEDED')),
+                   ('PENDING','RUNNING','EXPORTED','IMPORTING','DONE','FAILED','IMPORT_FAILED','UNKNOWN',
+                    'CANCELED','SUPERSEDED')),
   attempts         int  NOT NULL DEFAULT 0,
   next_attempt_at  timestamptz,
   lease_owner      text,
@@ -160,24 +169,57 @@ CREATE TABLE IF NOT EXISTS export_subblock (
 CREATE INDEX IF NOT EXISTS export_subblock_status_idx ON export_subblock (status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS export_subblock_req_idx ON export_subblock (request_id, status);
 
+-- Estados do subbloco: PENDING → RUNNING (procedure) → EXPORTED (.dat gerado) → IMPORTING → DONE (no Delta).
+-- IMPORT_FAILED = importação falhou: o período foi limpo no destino e LIBERADO para um novo pedido.
+ALTER TABLE export_subblock DROP CONSTRAINT IF EXISTS export_subblock_status_check;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'export_subblock_status_chk') THEN
+    ALTER TABLE export_subblock ADD CONSTRAINT export_subblock_status_chk CHECK (status IN
+      ('PENDING','RUNNING','EXPORTED','IMPORTING','DONE','FAILED','IMPORT_FAILED','UNKNOWN','CANCELED','SUPERSEDED'));
+  END IF;
+END $$;
+ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS file_name text;        -- .dat gerado pela procedure
+ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS import_attempts int NOT NULL DEFAULT 0;
+ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS rows_loaded bigint;
+ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS delta_version bigint;
+ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS exported_at timestamptz;
+ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS loaded_at timestamptz;
+
 -- Bloqueio de duplicidade no banco: dois subblocos vivos da mesma tabela não podem se sobrepor.
--- FAILED também reserva o período até o usuário repetir ou cancelar; CANCELED libera para novo pedido.
+-- FAILED reserva o período até o usuário repetir ou cancelar; CANCELED e IMPORT_FAILED liberam para novo pedido.
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'export_subblock_no_overlap'
-             AND pg_get_constraintdef(oid) NOT LIKE '%FAILED%') THEN
+             AND pg_get_constraintdef(oid) NOT LIKE '%EXPORTED%') THEN
     ALTER TABLE export_subblock DROP CONSTRAINT export_subblock_no_overlap;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'export_subblock_no_overlap') THEN
-    -- falhas antigas cujo período já foi pedido de novo viram canceladas (decisão já tomada na prática)
-    UPDATE export_subblock f SET status = 'CANCELED', updated_at = now()
-    WHERE f.status = 'FAILED' AND EXISTS (
-      SELECT 1 FROM export_subblock o WHERE o.table_config_id = f.table_config_id AND o.subblock_id <> f.subblock_id
-        AND o.status IN ('PENDING','RUNNING','DONE','UNKNOWN') AND o.data_range && f.data_range);
     ALTER TABLE export_subblock ADD CONSTRAINT export_subblock_no_overlap
       EXCLUDE USING gist (table_config_id WITH =, data_range WITH &&)
-      WHERE (status IN ('PENDING','RUNNING','DONE','UNKNOWN','FAILED'));
+      WHERE (status IN ('PENDING','RUNNING','EXPORTED','IMPORTING','DONE','UNKNOWN','FAILED'));
   END IF;
 END $$;
+
+-- Histórico de cada importação do .dat para o Delta
+CREATE TABLE IF NOT EXISTS export_import_attempt (
+  import_attempt_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subblock_id      uuid NOT NULL REFERENCES export_subblock ON DELETE CASCADE,
+  attempt_no       int  NOT NULL,
+  databricks_run_id bigint,
+  status           text NOT NULL CHECK (status IN ('RUNNING','SUCCEEDED','FAILED','ABANDONED')),
+  file_path        text,
+  file_size        bigint,
+  dest_table       text,
+  rows_inserted    bigint,
+  rows_cleaned     bigint,          -- linhas removidas do período no destino (reprocesso ou limpeza após erro)
+  delta_version    bigint,
+  moved_to         text,            -- caminho na pasta de erro, quando houve erro
+  detail           text,            -- limpeza do DAT, retomada etc.
+  started_at       timestamptz NOT NULL DEFAULT now(),
+  finished_at      timestamptz,
+  error_class      text,
+  error_message    text,
+  UNIQUE (subblock_id, attempt_no)
+);
 
 -- Histórico de cada chamada da procedure
 CREATE TABLE IF NOT EXISTS export_attempt (
@@ -245,7 +287,7 @@ CREATE TABLE IF NOT EXISTS connection_test (
 CREATE INDEX IF NOT EXISTS connection_test_src_idx ON connection_test (source_id, requested_at DESC);
 
 -- Execuções do dispatcher (para o app saber se precisa disparar o Job)
-CREATE TABLE IF NOT EXISTS dispatcher_run (
+CREATE TABLE IF NOT EXISTS dispatcher_run (  -- execuções do dispatcher e do importador (coluna kind)
   run_id           bigint PRIMARY KEY,
   started_at       timestamptz NOT NULL DEFAULT now(),
   heartbeat_at     timestamptz NOT NULL DEFAULT now(),
@@ -253,6 +295,8 @@ CREATE TABLE IF NOT EXISTS dispatcher_run (
   status           text NOT NULL DEFAULT 'RUNNING',
   in_flight        int NOT NULL DEFAULT 0
 );
+
+ALTER TABLE dispatcher_run ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'dispatcher';
 
 -- Progresso por tabela do pedido
 DROP VIEW IF EXISTS v_request_table_progress;
@@ -262,10 +306,13 @@ SELECT rt.request_id, rt.request_table_id, rt.ordinal, rt.table_config_id, rt.co
        count(s.*)                                         AS total,
        count(*) FILTER (WHERE s.status = 'DONE')          AS done,
        count(*) FILTER (WHERE s.status = 'RUNNING')       AS running,
+       count(*) FILTER (WHERE s.status = 'EXPORTED')      AS exported,
+       count(*) FILTER (WHERE s.status = 'IMPORTING')     AS importing,
+       count(*) FILTER (WHERE s.status = 'IMPORT_FAILED') AS import_failed,
        count(*) FILTER (WHERE s.status = 'PENDING')       AS pending,
        count(*) FILTER (WHERE s.status = 'FAILED')        AS failed,
        count(*) FILTER (WHERE s.status = 'UNKNOWN')       AS unknown,
-       count(*) FILTER (WHERE s.status IN ('CANCELED','SUPERSEDED')) AS canceled,
+       count(*) FILTER (WHERE s.status IN ('CANCELED','SUPERSEDED','IMPORT_FAILED')) AS canceled,
        count(*) FILTER (WHERE s.status = 'CANCELED')      AS canceled_only,
        min(s.started_at) AS started_at, max(s.finished_at) AS last_finished_at
 FROM export_request_table rt
@@ -289,11 +336,11 @@ WITH cur AS (
 ), mr AS (
   SELECT s.table_config_id,
          range_agg(s.data_range) FILTER (WHERE s.status = 'DONE')                         AS done_mr,
-         range_agg(s.data_range) FILTER (WHERE s.status IN ('PENDING','RUNNING'))          AS inflight_mr,
+         range_agg(s.data_range) FILTER (WHERE s.status IN ('PENDING','RUNNING','EXPORTED','IMPORTING')) AS inflight_mr,
          range_agg(s.data_range) FILTER (WHERE s.status = 'UNKNOWN')                       AS unknown_mr,
-         range_agg(s.data_range) FILTER (WHERE s.status IN ('PENDING','RUNNING','DONE','UNKNOWN')) AS live_mr,
+         range_agg(s.data_range) FILTER (WHERE s.status IN ('PENDING','RUNNING','EXPORTED','IMPORTING','DONE','UNKNOWN')) AS live_mr,
          range_agg(s.data_range) FILTER (WHERE s.status = 'FAILED')                        AS failed_mr,
-         count(*) FILTER (WHERE s.status = 'RUNNING')  AS running,
+         count(*) FILTER (WHERE s.status IN ('RUNNING','EXPORTED','IMPORTING'))  AS running,
          count(*) FILTER (WHERE s.status = 'PENDING')  AS pending,
          max(s.finished_at) FILTER (WHERE s.status = 'DONE') AS last_success_at
   FROM export_subblock s GROUP BY s.table_config_id

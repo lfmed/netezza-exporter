@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, url_for
 
-from nzexport import repo, table_csv
+from nzexport import file_format, repo, table_csv
 from nzexport.planner import UNITS
 from nzexport.procedure import (DATE_FORMATS, DEFAULT_PROFILE, PROFILES, build_call, validate_destination,
                                 validate_table_config)
@@ -24,7 +24,8 @@ STATUS_LABEL = {
     "FAILED": "Falhou", "COMPLETED": "Concluído", "CANCELED": "Encerrado",
     "PENDING": "Pendente", "DONE": "Concluído", "UNKNOWN": "Desconhecido", "SUPERSEDED": "Substituído",
     "SUCCEEDED": "Sucesso", "ABANDONED": "Abandonado",
-    "SCHEDULED": "Agendado", "COMPLETA": "Completa", "EM_ANDAMENTO": "Em andamento", "INCOMPLETA": "Incompleta (lacunas)",
+    "SCHEDULED": "Agendado", "EXPORTED": "Exportado (aguardando importação)", "IMPORTING": "Importando",
+    "IMPORT_FAILED": "Falha na importação (liberado)", "COMPLETA": "Completa", "EM_ANDAMENTO": "Em andamento", "INCOMPLETA": "Incompleta (lacunas)",
     "NAO_INICIADA": "Não iniciada", "COM_FALHAS": "Com falhas", "SEM_ESCOPO": "Sem escopo",
     "ESTADO_DESCONHECIDO": "Estado desconhecido", "INATIVA": "Inativa", "THIS_REQUEST": "Neste pedido",
 }
@@ -102,7 +103,8 @@ def create_app() -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # upload de CSV
     app.jinja_env.globals.update(STATUS_LABEL=STATUS_LABEL, UNIT_LABEL=UNIT_LABEL, UNITS=UNITS,
                                   APP_VERSION=APP_VERSION, PROFILES=PROFILES, DEFAULT_PROFILE=DEFAULT_PROFILE,
-                                  DATE_FORMATS=list(DATE_FORMATS), DEMO_INI=date(2016, 1, 1),
+                                  DATE_FORMATS=list(DATE_FORMATS), FILE_OPTIONS=file_format.FILE_OPTIONS,
+                                  CLEAN_MODES=file_format.CLEAN_MODES, DEMO_INI=date(2016, 1, 1),
                                   DEMO_FIM=date(2016, 1, 31))
 
     def call_preview(cfg, source, data_ini, data_fim) -> str:
@@ -293,7 +295,8 @@ def create_app() -> Flask:
         status = request.args.get("sb_status") or None
         tables = repo.request_tables(db, request_id)
         totals = {k: sum(t[k] or 0 for t in tables) for k in ("total", "done", "running", "pending", "failed",
-                                                             "unknown", "canceled")}
+                                                             "unknown", "canceled", "exported", "importing",
+                                                             "import_failed")}
         return {"tables": tables, "totals": totals, "sb_status": status,
                 "subblocks": repo.request_subblocks(db, request_id, status=status, limit=1000),
                 "dispatcher": repo.live_dispatcher(db)}
@@ -456,6 +459,16 @@ def create_app() -> Flask:
                 raise ValueError("host inválido")
             if not host or not ident("database"):
                 raise ValueError("informe host e banco da sessão")
+            landing = (f.get("landing_root") or "").strip().rstrip("/")
+            if landing and not re.fullmatch(r"(s3://[a-z0-9][a-z0-9.\-]{1,62}|/Volumes/[A-Za-z0-9_]+/[A-Za-z0-9_]+/[A-Za-z0-9_]+)(/[A-Za-z0-9_.\-]+)*", landing):
+                raise ValueError("caminho da landing: use s3://<bucket>/<prefixo> ou /Volumes/<catálogo>/<schema>/<volume>/<pasta>")
+            folders = {k: (f.get(k) or d).strip().strip("/") for k, d in
+                       (("landing_dat_folder", "tmp"), ("landing_error_folder", "erro"), ("landing_work_folder", "limpeza"))}
+            for k, v in folders.items():
+                if not re.fullmatch(r"[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)*", v):
+                    raise ValueError(f"pasta inválida: {v!r}")
+            if len(set(folders.values())) != 3:
+                raise ValueError("as pastas do .dat, de erro e de limpeza precisam ser diferentes")
             fields = dict(display_name=(f.get("display_name") or sid).strip(), driver=driver, host=host or None,
                           port=_int(f.get("port"), 5480, 1, 65535), database=ident("database"),
                           security_level=_int(f.get("security_level"), 1, 0, 3),
@@ -463,7 +476,9 @@ def create_app() -> Flask:
                           max_sessions=_int(f.get("max_sessions"), lo=1, hi=200),
                           default_source_database=ident("default_source_database"),
                           default_ext_database=ident("default_ext_database"),
-                          default_ext_schema=ident("default_ext_schema"))
+                          default_ext_schema=ident("default_ext_schema"), landing_root=landing or None, **folders,
+                          max_imports=_int(f.get("max_imports"), 4, 1, 50),
+                          file_wait_min=_int(f.get("file_wait_min"), 10, 0, 1440))
             user, password = (f.get("nz_user") or "").strip(), f.get("nz_password") or ""
             if user or password:
                 services.put_credentials(sid, user or None, password or None)
@@ -515,6 +530,7 @@ def create_app() -> Flask:
                 ext_database=(f.get("ext_database") or "").strip().upper() or None,
                 ext_schema=(f.get("ext_schema") or "").strip().upper() or None,
                 time_column=(f.get("time_column") or "").strip().upper() or None,
+                file_options=file_format.clean({k: f.get(f"fo_{k}") for k in file_format.FILE_OPTIONS}),
                 dest_catalog=(f.get("dest_catalog") or "").strip() or None,
                 dest_schema=(f.get("dest_schema") or "").strip() or None,
                 dest_table=(f.get("dest_table") or "").strip() or None,

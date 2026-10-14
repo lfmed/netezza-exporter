@@ -90,3 +90,13 @@ def test_destination_must_be_complete_and_simple():
     assert any("dest_schema: não informado" in e for e in r.errors) and any("dest_table: nome inválido" in e for e in r.errors)
     r = table_csv.parse(head + "FATO_D;FATO_D;SK;migracao;bronze;fato_d\n", DEFAULTS)[0]
     assert not r.errors and r.values["dest_table"] == "fato_d"
+
+
+def test_file_options_keep_only_differences():
+    from nzexport import file_format
+    assert file_format.clean({"delimitador": "", "encoding": "UTF-8", "header": "true", "limpeza": "não"}) == \
+        {"encoding": "UTF-8", "limpeza": "false"}
+    eff = file_format.effective({"encoding": "UTF-8"})
+    assert eff["encoding"] == "UTF-8" and eff["delimitador"] == "|" and eff["limpeza_modo"] == "CLIENTE"
+    with pytest.raises(ValueError):
+        file_format.clean({"limpeza_modo": "XPTO"})
