@@ -73,8 +73,9 @@ def get_table(db: Database, table_config_id: str):
         WHERE tc.table_config_id = %s""", (table_config_id,))
 
 
-TABLE_VERSION_FIELDS = ("source_table", "procedure_name", "default_subblock_unit", "default_subblock_size",
-                        "max_parallel", "call_timeout_min", "max_retries", "retry_unknown",
+TABLE_VERSION_FIELDS = ("call_profile", "source_database", "source_table", "ext_database", "ext_schema",
+                        "time_column", "date_format", "procedure_name", "default_subblock_unit",
+                        "default_subblock_size", "max_parallel", "call_timeout_min", "max_retries", "retry_unknown",
                         "migration_start", "migration_end", "description")
 
 

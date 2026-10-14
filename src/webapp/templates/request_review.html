@@ -18,7 +18,7 @@
   <h2>{{ loop.index }}. {{ r.table_config_id }} {% if r.is_reprocess %}<span class="badge s-stopping">Reprocessamento</span>{% endif %}</h2>
   {% if c %}
   {% set src = sources.get(c.source_id) %}
-  <p class="muted">Procedure <code>{{ c.procedure_name }}('{{ c.source_table }}', data_ini, data_fim)</code> · versão da config {{ c.config_version }} ·
+  <p class="muted">Perfil <b>{{ c.call_profile }}</b> · procedure <code>{{ c.procedure_name }}</code> · versão da config {{ c.config_version }} ·
      até {{ c.max_parallel }} chamada(s) simultânea(s) nesta tabela · origem {{ c.source_id }} (limite global {{ src.max_sessions if src else '?' }}, driver <b>{{ src.driver if src else '?' }}</b>)</p>
   {% endif %}
   <p>Solicitado: {{ r.period_start|dt }} → {{ r.period_end|dt }} · subbloco de {{ r.subblock_size }} {{ UNIT_LABEL[r.subblock_unit] }}{% if r.calendar_aligned %} (alinhado ao calendário){% endif %} ·
@@ -53,7 +53,7 @@
   <details {{ 'open' if r.blocks|length <= 24 }}><summary>Ver subblocos (na ordem de execução: do mais recente para o mais antigo)</summary>
     <table class="grid compact"><thead><tr><th>#</th><th>data_ini</th><th>data_fim (inclusiva)</th><th>Chamada</th></tr></thead><tbody>
     {% for b in (r.blocks|reverse|list)[:500] %}<tr><td>{{ b.seq }}</td><td>{{ b.start }}</td><td>{{ b.end }}</td>
-      <td><code>{{ c.procedure_name if c }}('{{ c.source_table if c }}', '{{ b.start }}', '{{ b.end }}')</code></td></tr>{% endfor %}
+      <td><code>{{ call_preview(c, src, b.start, b.end) if c else '' }}</code></td></tr>{% endfor %}
     {% if r.blocks|length > 500 %}<tr><td colspan="4" class="muted">… mais {{ r.blocks|length - 500 }}</td></tr>{% endif %}
     </tbody></table>
   </details>

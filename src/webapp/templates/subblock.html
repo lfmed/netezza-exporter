@@ -46,7 +46,9 @@
 <div class="card"><h2>Tentativas</h2>
 <table class="grid compact"><thead><tr><th>#</th><th>Status</th><th>Run</th><th>Chamada</th><th>Início</th><th>Duração</th><th>Erro</th></tr></thead><tbody>
 {% for a in attempts %}<tr><td>{{ a.attempt_no }}</td><td>{{ badge(a.status) }}</td><td>{{ a.databricks_run_id }}</td>
-  <td><code>{{ a.call_statement }}</code></td><td class="nowrap">{{ a.started_at|dt }}</td><td>{{ a.started_at|dur(a.finished_at) }}</td>
+  <td><code>{{ a.call_statement or '—' }}</code>
+    {% if a.output_object %}<br><small class="muted">saída: <code>{{ a.output_object }}</code></small>{% endif %}
+    {% if a.call_result %}<details><summary><small>retorno da procedure</small></summary><code style="white-space:pre-wrap;word-break:break-all">{{ a.call_result }}</code></details>{% endif %}</td><td class="nowrap">{{ a.started_at|dt }}</td><td>{{ a.started_at|dur(a.finished_at) }}</td>
   <td><small class="bad-text">{% if a.error_class %}[{{ a.error_class }}] {% endif %}{{ a.error_message or '' }}</small></td></tr>
 {% else %}<tr><td colspan="7" class="empty">Nenhuma tentativa.</td></tr>{% endfor %}
 </tbody></table></div>

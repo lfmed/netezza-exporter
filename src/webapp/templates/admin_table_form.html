@@ -1,18 +1,43 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="head"><h1>{{ 'Tabela ' ~ t.table_config_id if t else 'Nova tabela' }}</h1></section>
+<section class="head"><div><h1>🗂️ {{ 'Tabela ' ~ t.table_config_id if t and not is_new else 'Nova tabela' }}</h1><p>Cadastro da tabela e dos parâmetros enviados à procedure</p></div></section>
 <form method="post" action="{{ url_for('admin_table_save') }}" class="card">
   <p class="hint">Salvar cria uma <b>nova versão</b> da configuração. Pedidos já criados continuam usando a versão com que foram enviados.</p>
   <div class="row">
-    <label>Identificador lógico<input name="table_config_id" value="{{ t.table_config_id if t else '' }}" {{ 'readonly' if t }} required></label>
+    <label>Identificador lógico<input name="table_config_id" value="{{ t.table_config_id if t else '' }}" {{ 'readonly' if t and not is_new }} required></label>
     <label>Origem<select name="source_id">{% for s in sources %}<option {{ 'selected' if t and t.source_id == s.source_id }}>{{ s.source_id }}</option>{% endfor %}</select></label>
     <label>Ativa<select name="active"><option value="1" {{ 'selected' if not t or t.active }}>Sim</option><option value="0" {{ 'selected' if t and not t.active }}>Não</option></select></label>
   </div>
+  <h3 style="margin-top:6px">Chamada da procedure</h3>
   <div class="row">
-    <label class="grow">Valor do parâmetro <i>tabela</i><input name="source_table" value="{{ t.source_table if t else '' }}" required placeholder="ex.: DW.FATO_VENDAS"></label>
-    <label class="grow">Procedure<input name="procedure_name" value="{{ t.procedure_name if t else '' }}" required placeholder="ex.: ADMIN.SP_EXPORTA_TABELA"
-           pattern="[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2}"></label>
+    <label class="grow">Perfil de chamada<select name="call_profile" id="call_profile">
+      {% for k, p in PROFILES.items() %}<option value="{{ k }}" {{ 'selected' if (t and t.call_profile == k) or (not t and k == DEFAULT_PROFILE) }}>{{ p.label }}</option>{% endfor %}
+    </select></label>
+    <label class="grow">Procedure<input name="procedure_name" id="procedure_name" value="{{ t.procedure_name if t else 'SP_CARGA_EVENTUAL' }}" required
+           pattern="[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2}" placeholder="SP_CARGA_EVENTUAL"></label>
+    <label>Formato das datas<select name="date_format" id="date_format">
+      {% for f in DATE_FORMATS %}<option {{ 'selected' if (t and t.date_format == f) or (not t and f == 'YYYYMMDD') }}>{{ f }}</option>{% endfor %}</select></label>
   </div>
+  {% set src = (sources|selectattr('source_id', 'equalto', t.source_id if t else (sources[0].source_id if sources else ''))|list or [none])[0] %}
+  <div class="row sp7">
+    <label class="grow"><span><code>p_banco</code> — banco de origem (metadados)</span>
+      <input name="source_database" id="source_database" value="{{ t.source_database or '' if t else '' }}" placeholder="padrão da conexão: {{ src.default_source_database or '—' if src else '—' }}" data-default="{{ src.default_source_database or '' if src else '' }}"></label>
+    <label class="grow"><span><code>p_tabela</code> — nome da tabela</span>
+      <input name="source_table" id="source_table" value="{{ t.source_table if t else '' }}" required placeholder="ex.: FATO_VENDAS"></label>
+    <label class="grow"><span><code>p_NomeColunaTempo</code> — coluna de data do filtro</span>
+      <input name="time_column" id="time_column" value="{{ t.time_column or '' if t else '' }}" placeholder="ex.: SK_DATA (numérica AAAAMMDD)"></label>
+  </div>
+  <div class="row sp7">
+    <label class="grow"><span><code>p_banco_ext_table</code> — banco da external table</span>
+      <input name="ext_database" id="ext_database" value="{{ t.ext_database or '' if t else '' }}" placeholder="padrão da conexão: {{ src.default_ext_database or '—' if src else '—' }}" data-default="{{ src.default_ext_database or '' if src else '' }}"></label>
+    <label class="grow"><span><code>p_esquema_ext_table</code> — esquema da external table</span>
+      <input name="ext_schema" id="ext_schema" value="{{ t.ext_schema or '' if t else '' }}" placeholder="padrão da conexão: {{ src.default_ext_schema or '—' if src else '—' }}" data-default="{{ src.default_ext_schema or '' if src else '' }}"></label>
+    <label><span><code>p_dtini</code> / <code>p_dtfim</code></span><input value="vêm de cada subbloco" disabled></label>
+  </div>
+  <div class="lp-note" style="margin:0 0 14px"><b>Prévia da chamada</b> (subbloco de exemplo: janeiro/2016)<br>
+    <code id="call_preview" style="white-space:normal;word-break:break-all"></code>
+    <br><small class="muted">Banco e esquema da external table em branco usam o padrão da conexão. No perfil SP_CARGA_EVENTUAL, a sessão é aberta no banco da external table,
+      porque a procedure grava com <code>INSERT INTO esquema.tabela</code>, sem o banco.</small></div>
   <div class="row">
     <label>Subbloco padrão<span class="nowrap"><input type="number" name="default_subblock_size" min="1" value="{{ t.default_subblock_size if t else 1 }}" style="width:5em">
       <select name="default_subblock_unit">{% for u in UNITS %}<option value="{{ u }}" {{ 'selected' if (t and t.default_subblock_unit == u) or (not t and u == 'MONTH') }}>{{ UNIT_LABEL[u] }}</option>{% endfor %}</select></span></label>
@@ -36,4 +61,27 @@
 {% for v in versions %}<tr><td>v{{ v.config_version }}</td><td>{{ v.source_table }}</td><td>{{ v.procedure_name }}</td><td>{{ v.max_parallel }}</td><td>{{ v.call_timeout_min }}</td><td>{{ v.max_retries }}</td><td><small>{{ v.created_by }}</small></td><td><small>{{ v.created_at|dt }}</small></td></tr>{% endfor %}
 </tbody></table></div>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const v = (id) => { const el = $(id); return (el.value || el.dataset.default || '').trim(); };
+  function render() {
+    const fmt = $('date_format').value === 'YYYY-MM-DD' ? ['2016-01-01', '2016-01-31'] : ['20160101', '20160131'];
+    const p = $('call_profile').value, proc = v('procedure_name') || '?';
+    const q = (x) => "'" + (x || '?') + "'";
+    const sp7 = p === 'SP_CARGA_EVENTUAL';
+    document.querySelectorAll('.sp7 label').forEach((l) => {
+      const inp = l.querySelector('input'); if (!inp || inp.disabled) return;
+      if (['source_database', 'ext_database', 'ext_schema', 'time_column'].includes(inp.id)) l.style.display = sp7 ? '' : 'none';
+    });
+    $('call_preview').textContent = sp7
+      ? `CALL ${proc}(${[v('source_database'), v('source_table'), v('ext_database'), v('ext_schema'), fmt[0], fmt[1], v('time_column')].map(q).join(', ')})`
+      : `CALL ${proc}(${[v('source_table'), fmt[0], fmt[1]].map(q).join(', ')})`;
+  }
+  document.querySelectorAll('input, select').forEach((el) => el.addEventListener('input', render));
+  render();
+})();
+</script>
 {% endblock %}

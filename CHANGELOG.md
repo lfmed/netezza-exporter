@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 0.999 — 2026-10-14
+- Chamada da SP_CARGA_EVENTUAL (7 parâmetros): p_banco, p_tabela, p_banco_ext_table, p_esquema_ext_table e p_NomeColunaTempo no cadastro da tabela (banco/esquema com padrão da conexão), p_dtini/p_dtfim do subbloco em AAAAMMDD; prévia da chamada; validação estrita; sessão no banco da external table; retorno e arquivo esperado registrados por tentativa; cadastro inválido = falha CONFIG sem retry; CSV com as novas colunas.
+
 ## 0.998 — 2026-10-06
 - Subblocos executados do período mais recente para o mais antigo (dentro de cada pedido/tabela); listas do pedido e da revisão na mesma ordem.
 

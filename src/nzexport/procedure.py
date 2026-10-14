@@ -1,19 +1,51 @@
-"""Chamada da procedure Netezza: procedure(tabela, data_ini, data_fim), datas inclusivas.
+"""Chamada da procedure Netezza que gera os arquivos de um subbloco.
+
+Perfis de chamada (definidos no cadastro da tabela):
+  * SP_CARGA_EVENTUAL: SP_CARGA_EVENTUAL(p_banco, p_tabela, p_banco_ext_table, p_esquema_ext_table,
+                                         p_dtini, p_dtfim, p_NomeColunaTempo)  -- datas AAAAMMDD, fim inclusivo
+  * TABELA_INI_FIM:    procedure(tabela, data_ini, data_fim)
 
 A procedure grava os arquivos por conta própria; o retorno sem exceção significa concluído.
+Todos os valores são validados (identificadores e datas) antes de montar o comando, porque o nzpy
+substitui parâmetros sem escapar e a procedure concatena os valores em SQL dinâmico.
 """
 import random
 import re
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
-_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2}$")
+_PROC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2}$")
+_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,127}$")
+_DOTTED = _PROC_NAME
+
+DATE_FORMATS = {"YYYYMMDD": "%Y%m%d", "YYYY-MM-DD": "%Y-%m-%d"}
+
+# argumentos de cada perfil, na ordem da assinatura da procedure: (campo resolvido, nome do parâmetro)
+PROFILES = {
+    "SP_CARGA_EVENTUAL": {
+        "label": "SP_CARGA_EVENTUAL — 7 parâmetros (banco, tabela, banco ext., esquema ext., dtini, dtfim, coluna de tempo)",
+        "default_procedure": "SP_CARGA_EVENTUAL",
+        "args": [("source_database", "p_banco"), ("source_table", "p_tabela"),
+                 ("ext_database", "p_banco_ext_table"), ("ext_schema", "p_esquema_ext_table"),
+                 ("data_ini", "p_dtini"), ("data_fim", "p_dtfim"), ("time_column", "p_NomeColunaTempo")],
+    },
+    "TABELA_INI_FIM": {
+        "label": "procedure(tabela, data_ini, data_fim) — 3 parâmetros",
+        "default_procedure": "",
+        "args": [("source_table", "tabela"), ("data_ini", "data_ini"), ("data_fim", "data_fim")],
+    },
+}
+DEFAULT_PROFILE = "SP_CARGA_EVENTUAL"
 
 
 class ProcedureError(Exception):
-    """A procedure executou e retornou erro: falha definitiva desta tentativa."""
+    """A procedure executou e retornou erro: falha desta tentativa."""
+
+
+class ConfigError(ProcedureError):
+    """Cadastro incompleto/inválido: não adianta repetir sem corrigir a configuração."""
 
 
 class ConnectError(Exception):
@@ -27,22 +59,81 @@ class OutcomeUnknown(Exception):
 @dataclass
 class CallSpec:
     procedure_name: str
-    source_table: str
-    data_ini: date
-    data_fim: date
+    args: list[str]
+    arg_names: list[str]
     timeout_s: int
+    session_database: str | None = None   # banco da sessão nzpy
+    output_object: str | None = None      # external table / arquivo esperado (rastreabilidade)
+    profile: str = DEFAULT_PROFILE
+    extra: dict = field(default_factory=dict)
 
     def statement(self) -> str:
-        if not _IDENT.match(self.procedure_name):
-            raise ProcedureError(f"nome de procedure inválido: {self.procedure_name!r}")
-        return f"CALL {self.procedure_name}(?, ?, ?)"
-
-    def params(self) -> tuple:
-        return (self.source_table, self.data_ini.isoformat(), self.data_fim.isoformat())
+        quoted = ", ".join("'" + a.replace("'", "''") + "'" for a in self.args)
+        return f"CALL {self.procedure_name}({quoted})"
 
     def describe(self) -> str:
-        p = self.params()
-        return f"CALL {self.procedure_name}('{p[0]}', '{p[1]}', '{p[2]}')"
+        return self.statement()
+
+
+def _resolve(cfg: dict, source: dict | None) -> dict:
+    """Valores efetivos: cadastro da tabela, com padrões da conexão para banco/esquema."""
+    src = source or {}
+    return {
+        "source_database": (cfg.get("source_database") or src.get("default_source_database") or "").strip(),
+        "source_table": (cfg.get("source_table") or "").strip(),
+        "ext_database": (cfg.get("ext_database") or src.get("default_ext_database") or "").strip(),
+        "ext_schema": (cfg.get("ext_schema") or src.get("default_ext_schema") or "").strip(),
+        "time_column": (cfg.get("time_column") or "").strip(),
+    }
+
+
+def build_call(cfg: dict, source: dict | None, data_ini: date, data_fim: date) -> CallSpec:
+    """Monta a chamada de um subbloco a partir do cadastro da tabela e da conexão. Levanta ConfigError."""
+    profile = cfg.get("call_profile") or DEFAULT_PROFILE
+    if profile not in PROFILES:
+        raise ConfigError(f"perfil de chamada desconhecido: {profile!r}")
+    proc = (cfg.get("procedure_name") or PROFILES[profile]["default_procedure"]).strip()
+    if not _PROC_NAME.match(proc):
+        raise ConfigError(f"nome de procedure inválido: {proc!r}")
+    fmt = DATE_FORMATS.get(cfg.get("date_format") or "YYYYMMDD")
+    if not fmt:
+        raise ConfigError(f"formato de data inválido: {cfg.get('date_format')!r}")
+    v = _resolve(cfg, source)
+    v["data_ini"], v["data_fim"] = data_ini.strftime(fmt), data_fim.strftime(fmt)
+
+    errors = []
+    for key, pname in PROFILES[profile]["args"]:
+        if key in ("data_ini", "data_fim"):
+            continue
+        val = v[key]
+        pattern = _DOTTED if (profile == "TABELA_INI_FIM" and key == "source_table") else _IDENT
+        if not val:
+            errors.append(f"{pname} não informado")
+        elif not pattern.match(val):
+            errors.append(f"{pname} inválido: {val!r} (use só letras, números e _)")
+    if errors:
+        raise ConfigError("; ".join(errors))
+
+    args = [v[k] for k, _ in PROFILES[profile]["args"]]
+    names = [n for _, n in PROFILES[profile]["args"]]
+    timeout_s = int(cfg.get("call_timeout_min") or 240) * 60
+    if profile == "SP_CARGA_EVENTUAL":
+        ext_name = f"{v['source_table']}_{v['data_ini']}_{v['data_fim']}"
+        # a procedure faz INSERT INTO <esquema>.<tabela> sem o banco: a sessão precisa estar no banco da external table
+        return CallSpec(proc, args, names, timeout_s, session_database=v["ext_database"], profile=profile,
+                        output_object=f"{v['ext_database']}.{v['ext_schema']}.{ext_name} -> /tmp/{ext_name}.dat",
+                        extra={"external_table": f"{v['ext_database']}.{v['ext_schema']}.{ext_name}",
+                               "data_object": f"/tmp/{ext_name}.dat"})
+    return CallSpec(proc, args, names, timeout_s, session_database=None, profile=profile)
+
+
+def validate_table_config(cfg: dict, source: dict | None) -> list[str]:
+    """Erros de cadastro (para a tela e o CSV), usando um período de exemplo."""
+    try:
+        build_call(cfg, source, date(2000, 1, 1), date(2000, 1, 31))
+        return []
+    except ConfigError as e:
+        return str(e).split("; ")
 
 
 class FakeProcedureClient:
@@ -55,7 +146,7 @@ class FakeProcedureClient:
         self.fail_pct = float(o.get("fail_pct", 0))
         self.unknown_pct = float(o.get("unknown_pct", 0))
 
-    def call(self, spec: CallSpec, should_abort=lambda: False) -> None:
+    def call(self, spec: CallSpec, should_abort=lambda: False) -> str | None:
         spec.statement()
         duration = random.uniform(self.min_s, self.max_s)
         deadline = time.time() + duration
@@ -63,9 +154,13 @@ class FakeProcedureClient:
             time.sleep(min(0.5, max(0, deadline - time.time())))
         roll = random.uniform(0, 100)
         if roll < self.fail_pct:
-            raise ProcedureError(f"[fake] erro simulado na procedure para {spec.source_table}")
+            raise ProcedureError(f"[fake] erro simulado na procedure para {spec.args[1] if len(spec.args) > 1 else spec.args[0]}")
         if roll < self.fail_pct + self.unknown_pct:
             raise OutcomeUnknown("[fake] conexão perdida após o envio")
+        return "[fake] ok"
+
+    def test(self) -> list[dict]:
+        return [{"check": "conexão", "ok": True, "detail": "driver simulado (fake): nenhuma conexão real é feita"}]
 
 
 class NzpyProcedureClient:
@@ -73,19 +168,24 @@ class NzpyProcedureClient:
         self.conn_params = conn_params
         self.connect_timeout_s = connect_timeout_s
 
-    def call(self, spec: CallSpec, should_abort=lambda: False) -> None:
+    def _connect(self, database: str | None):
         import nzpy
 
-        stmt = spec.statement()
+        p = self.conn_params
         try:
-            conn = nzpy.connect(
-                user=self.conn_params["user"], password=self.conn_params["password"],
-                host=self.conn_params["host"], port=int(self.conn_params.get("port", 5480)),
-                database=self.conn_params["database"], securityLevel=int(self.conn_params.get("security_level", 1)),
+            return nzpy.connect(
+                user=p["user"], password=p["password"], host=p["host"], port=int(p.get("port") or 5480),
+                database=database or p["database"], securityLevel=int(p.get("security_level") or 1),
                 timeout=self.connect_timeout_s, application_name="nzexport", logLevel=0,
             )
         except Exception as e:  # noqa: BLE001 - qualquer falha aqui = não enviou
-            raise ConnectError(_mask(str(e), self.conn_params)) from None
+            raise ConnectError(_mask(str(e), p)) from None
+
+    def call(self, spec: CallSpec, should_abort=lambda: False) -> str | None:
+        import nzpy
+
+        stmt = spec.statement()
+        conn = self._connect(spec.session_database)
         try:
             # timeout de socket passa a valer para a execução da procedure
             sock = getattr(conn, "_usock", None)
@@ -93,11 +193,14 @@ class NzpyProcedureClient:
                 sock.settimeout(spec.timeout_s)
             conn.autocommit = True
             cur = conn.cursor()
-            cur.execute(stmt, spec.params())
+            cur.execute(stmt)  # valores já validados e literais montados por nós (sem substituição do nzpy)
+            result = None
             try:
-                cur.fetchall()
+                row = cur.fetchone()
+                result = str(row[0])[:4000] if row else None
             except Exception:  # noqa: BLE001 - procedure sem resultset
                 pass
+            return result
         except (socket.timeout, TimeoutError, OSError, ConnectionError, nzpy.InterfaceError) as e:
             # chamada já enviada e a conexão caiu/expirou: resultado desconhecido
             raise OutcomeUnknown(f"conexão perdida/expirada durante a chamada: {type(e).__name__}: "
@@ -109,6 +212,42 @@ class NzpyProcedureClient:
                 conn.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    def test(self, procedure_checks: list[tuple[str, str]] | None = None) -> list[dict]:
+        """Teste de conexão: autentica, identifica a sessão e verifica se as procedures existem."""
+        results = []
+        try:
+            conn = self._connect(None)
+        except ConnectError as e:
+            return [{"check": "conexão", "ok": False, "detail": str(e)}]
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT CURRENT_USER, CURRENT_CATALOG")
+            u, db = cur.fetchone()
+            results.append({"check": "conexão", "ok": True, "detail": f"usuário {u}, banco {db}"})
+            try:
+                cur.execute("SELECT VERSION()")
+                results.append({"check": "versão", "ok": True, "detail": str(cur.fetchone()[0])[:300]})
+            except Exception as e:  # noqa: BLE001
+                results.append({"check": "versão", "ok": False, "detail": _mask(str(e), self.conn_params)})
+            for database, proc in procedure_checks or []:
+                if not (_IDENT.match(database or "") and _PROC_NAME.match(proc or "")):
+                    continue
+                name = proc.split(".")[-1].upper()
+                try:
+                    cur.execute(f"SELECT COUNT(*) FROM {database}.._V_PROCEDURE WHERE UPPER(PROCEDURE) = '{name}'")
+                    n = cur.fetchone()[0]
+                    results.append({"check": f"procedure {name} em {database}", "ok": n > 0,
+                                    "detail": "encontrada" if n else "não encontrada"})
+                except Exception as e:  # noqa: BLE001
+                    results.append({"check": f"procedure {name} em {database}", "ok": False,
+                                    "detail": _mask(str(e), self.conn_params)})
+        finally:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return results
 
 
 def _mask(msg: str, params: dict) -> str:
@@ -125,8 +264,17 @@ def build_client(source: dict, secrets_reader=None):
     if source["driver"] == "nzpy":
         scope = source.get("secret_scope")
         if not scope or secrets_reader is None:
-            raise ConnectError("origem nzpy sem secret_scope configurado")
-        params = {k: secrets_reader(scope, k) for k in ("host", "port", "database", "user", "password")}
-        params["security_level"] = (source.get("driver_options") or {}).get("security_level", 1)
+            raise ConnectError("conexão nzpy sem credenciais configuradas (usuário/senha)")
+        sid = source["source_id"]
+        try:
+            user = secrets_reader(scope, f"{sid}-user")
+            password = secrets_reader(scope, f"{sid}-password")
+        except Exception:  # noqa: BLE001
+            raise ConnectError("credenciais da conexão não encontradas no secret scope; "
+                               "configure usuário e senha em Administração → Conexão") from None
+        if not source.get("host") or not source.get("database"):
+            raise ConnectError("conexão sem host ou banco configurado (Administração → Conexão)")
+        params = {"host": source["host"], "port": source.get("port") or 5480, "database": source["database"],
+                  "user": user, "password": password, "security_level": source.get("security_level", 1)}
         return NzpyProcedureClient(params, connect_timeout_s=source.get("connect_timeout_s", 30))
     raise ValueError(f"driver desconhecido: {source['driver']}")

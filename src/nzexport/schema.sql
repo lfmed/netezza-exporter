@@ -16,6 +16,17 @@ CREATE TABLE IF NOT EXISTS source_connection (
   updated_by       text
 );
 
+-- Parâmetros da conexão Netezza (usuário e senha ficam no secret scope, nunca no banco)
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS host text;
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS port int NOT NULL DEFAULT 5480;
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS database text;            -- banco padrão da sessão
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS security_level int NOT NULL DEFAULT 1;
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS default_source_database text;  -- padrão de p_banco
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS default_ext_database text;     -- padrão de p_banco_ext_table
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS default_ext_schema text;       -- padrão de p_esquema_ext_table
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS credentials_set_at timestamptz;
+ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS credentials_set_by text;
+
 CREATE TABLE IF NOT EXISTS table_config (
   table_config_id  text PRIMARY KEY,   -- nome lógico exibido no app
   source_id        text NOT NULL REFERENCES source_connection,
@@ -45,6 +56,20 @@ CREATE TABLE IF NOT EXISTS table_config_version (
 );
 
 DROP VIEW IF EXISTS v_table_load_status;
+-- Parâmetros da chamada da procedure (perfil SP_CARGA_EVENTUAL)
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS call_profile text NOT NULL DEFAULT 'TABELA_INI_FIM';
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS source_database text;   -- p_banco
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS ext_database text;      -- p_banco_ext_table
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS ext_schema text;        -- p_esquema_ext_table
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS time_column text;       -- p_NomeColunaTempo
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'nzexport'
+                 AND table_name = 'table_config_version' AND column_name = 'date_format') THEN
+    -- versões já existentes (perfil de 3 parâmetros) continuam recebendo AAAA-MM-DD, como antes
+    ALTER TABLE table_config_version ADD COLUMN date_format text NOT NULL DEFAULT 'YYYY-MM-DD';
+    ALTER TABLE table_config_version ALTER COLUMN date_format SET DEFAULT 'YYYYMMDD';
+  END IF;
+END $$;
 ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS migration_start date;
 ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS migration_end date;
 ALTER TABLE table_config_version DROP COLUMN IF EXISTS expected_periodicity_unit;
@@ -155,6 +180,8 @@ CREATE TABLE IF NOT EXISTS export_attempt (
   error_message    text,
   UNIQUE (subblock_id, attempt_no)
 );
+ALTER TABLE export_attempt ADD COLUMN IF NOT EXISTS call_result text;     -- retorno da procedure
+ALTER TABLE export_attempt ADD COLUMN IF NOT EXISTS output_object text;   -- external table / arquivo esperado
 
 CREATE TABLE IF NOT EXISTS export_event (
   event_id         bigserial PRIMARY KEY,

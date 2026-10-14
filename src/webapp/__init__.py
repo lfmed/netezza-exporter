@@ -9,6 +9,7 @@ from flask import Flask, Response, abort, flash, jsonify, redirect, render_templ
 
 from nzexport import repo, table_csv
 from nzexport.planner import UNITS
+from nzexport.procedure import DATE_FORMATS, DEFAULT_PROFILE, PROFILES, build_call, validate_table_config
 
 from . import services
 
@@ -98,7 +99,16 @@ def create_app() -> Flask:
     app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
     app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # upload de CSV
     app.jinja_env.globals.update(STATUS_LABEL=STATUS_LABEL, UNIT_LABEL=UNIT_LABEL, UNITS=UNITS,
-                                  APP_VERSION=APP_VERSION)
+                                  APP_VERSION=APP_VERSION, PROFILES=PROFILES, DEFAULT_PROFILE=DEFAULT_PROFILE,
+                                  DATE_FORMATS=list(DATE_FORMATS), DEMO_INI=date(2016, 1, 1),
+                                  DEMO_FIM=date(2016, 1, 31))
+
+    def call_preview(cfg, source, data_ini, data_fim) -> str:
+        try:
+            return build_call(cfg, source, data_ini, data_fim).statement()
+        except Exception as e:  # noqa: BLE001 - prévia: mostra o problema de cadastro
+            return f"⚠ cadastro incompleto: {e}"
+    app.jinja_env.globals["call_preview"] = call_preview
 
     @app.template_filter("dt")
     def _fmt_dt(v):
@@ -430,11 +440,13 @@ def create_app() -> Flask:
         t = repo.get_table(db, table_config_id) if table_config_id else None
         versions = db.query("SELECT * FROM table_config_version WHERE table_config_id = %s ORDER BY config_version DESC",
                             (table_config_id,)) if table_config_id else []
-        return render_template("admin_table_form.html", t=t, sources=repo.list_sources(db), versions=versions)
+        return render_template("admin_table_form.html", t=t, is_new=t is None, sources=repo.list_sources(db),
+                               versions=versions)
 
     @app.post("/admin/tables")
     def admin_table_save():
         f = request.form
+        fields, tid = {}, (f.get("table_config_id") or "").strip().upper()
         try:
             tid = f["table_config_id"].strip().upper()
             if not tid:
@@ -444,7 +456,13 @@ def create_app() -> Flask:
             if mig_start and mig_end and mig_start > mig_end:
                 raise ValueError("início do escopo maior que o fim")
             fields = dict(
-                source_table=f["source_table"].strip(), procedure_name=f["procedure_name"].strip(),
+                call_profile=f.get("call_profile") or DEFAULT_PROFILE,
+                source_database=(f.get("source_database") or "").strip().upper() or None,
+                ext_database=(f.get("ext_database") or "").strip().upper() or None,
+                ext_schema=(f.get("ext_schema") or "").strip().upper() or None,
+                time_column=(f.get("time_column") or "").strip().upper() or None,
+                date_format=f.get("date_format") or "YYYYMMDD",
+                source_table=f["source_table"].strip().upper(), procedure_name=f["procedure_name"].strip().upper(),
                 default_subblock_unit=f["default_subblock_unit"],
                 default_subblock_size=_int(f["default_subblock_size"], lo=1),
                 max_parallel=_int(f["max_parallel"], lo=1, hi=200),
@@ -453,10 +471,24 @@ def create_app() -> Flask:
                 retry_unknown=f.get("retry_unknown") == "1",
                 migration_start=mig_start, migration_end=mig_end,
                 description=f.get("description") or None)
-            v = repo.save_table(services.db(), _user(), tid, f["source_id"], f.get("active") == "1", fields)
+            db = services.db()
+            source = next((x for x in repo.list_sources(db) if x["source_id"] == f["source_id"]), None)
+            errors = validate_table_config(fields, source)
+            if errors:
+                raise ValueError("cadastro da chamada incompleto: " + "; ".join(errors))
+            v = repo.save_table(db, _user(), tid, f["source_id"], f.get("active") == "1", fields)
             flash(f"Tabela {tid} salva (versão {v}).", "info")
         except (ValueError, KeyError) as e:
             flash(f"Erro: {e}", "error")
+            # reabre o formulário com o que foi digitado
+            db = services.db()
+            existing = repo.get_table(db, tid) if tid else None
+            t = {**(existing or {}), **{k: v for k, v in f.items()}, **fields, "table_config_id": tid,
+                 "active": f.get("active") == "1", "retry_unknown": f.get("retry_unknown") == "1"}
+            for k in ("default_subblock_size", "max_parallel", "call_timeout_min", "max_retries"):
+                t[k] = f.get(k)
+            return render_template("admin_table_form.html", t=t, is_new=existing is None,
+                                   sources=repo.list_sources(db), versions=[]), 400
         return redirect(url_for("admin"))
 
     # ------------------------------------------------------------ carga de tabelas via CSV
@@ -475,7 +507,7 @@ def create_app() -> Flask:
 
     def _import_preview(text: str, filename: str):
         db = services.db()
-        sources = [x["source_id"] for x in repo.list_sources(db)]
+        sources = {x["source_id"]: x for x in repo.list_sources(db)}
         rows = table_csv.parse(text, sources)
         current = {t["table_config_id"]: t for t in repo.list_tables(db)}
         return table_csv.classify(rows, current)

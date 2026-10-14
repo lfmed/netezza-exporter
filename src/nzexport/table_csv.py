@@ -5,13 +5,21 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from .procedure import DATE_FORMATS, DEFAULT_PROFILE, PROFILES, validate_table_config
+
 # coluna, obrigatória, descrição (vai para o modelo e para a tela)
 COLUMNS = [
     ("table_config_id", True, "Identificador lógico da tabela no app (maiúsculas, sem espaços). Ex.: FATO_VENDAS"),
     ("source_id", False, "Origem Netezza cadastrada em Administração (padrão: a primeira origem)"),
     ("active", False, "sim/não: tabela disponível para novos pedidos (padrão: sim)"),
-    ("source_table", True, "Valor enviado no parâmetro 'tabela' da procedure. Ex.: DW.FATO_VENDAS"),
-    ("procedure_name", True, "Procedure chamada. Ex.: ADMIN.SP_EXPORTA_TABELA"),
+    ("call_profile", False, "Perfil de chamada: SP_CARGA_EVENTUAL (7 parâmetros) ou TABELA_INI_FIM (padrão: SP_CARGA_EVENTUAL)"),
+    ("procedure_name", False, "Procedure chamada (padrão do perfil: SP_CARGA_EVENTUAL)"),
+    ("source_database", False, "p_banco: banco de origem dos metadados (vazio = padrão da conexão)"),
+    ("source_table", True, "p_tabela: nome da tabela no Netezza. Ex.: FATO_VENDAS"),
+    ("ext_database", False, "p_banco_ext_table: banco da external table (vazio = padrão da conexão)"),
+    ("ext_schema", False, "p_esquema_ext_table: esquema da external table (vazio = padrão da conexão)"),
+    ("time_column", False, "p_NomeColunaTempo: coluna de data usada no filtro (obrigatória no perfil SP_CARGA_EVENTUAL)"),
+    ("date_format", False, "Formato de p_dtini/p_dtfim: YYYYMMDD ou YYYY-MM-DD (padrão: YYYYMMDD)"),
     ("default_subblock_unit", False, "Unidade do subbloco padrão: DIA, SEMANA, MES ou ANO (padrão: MES)"),
     ("default_subblock_size", False, "Quantidade de unidades por subbloco (padrão: 1)"),
     ("max_parallel", False, "Máximo de chamadas simultâneas desta tabela (padrão: 2)"),
@@ -23,7 +31,8 @@ COLUMNS = [
     ("description", False, "Descrição livre"),
 ]
 FIELDS = [c[0] for c in COLUMNS]
-VERSION_FIELDS = ("source_table", "procedure_name", "default_subblock_unit", "default_subblock_size", "max_parallel",
+VERSION_FIELDS = ("call_profile", "procedure_name", "source_database", "source_table", "ext_database", "ext_schema",
+                  "time_column", "date_format", "default_subblock_unit", "default_subblock_size", "max_parallel",
                   "call_timeout_min", "max_retries", "retry_unknown", "migration_start", "migration_end", "description")
 
 _UNIT_ALIASES = {"DAY": "DAY", "DIA": "DAY", "DIAS": "DAY", "D": "DAY",
@@ -33,17 +42,18 @@ _UNIT_ALIASES = {"DAY": "DAY", "DIA": "DAY", "DIAS": "DAY", "D": "DAY",
 _UNIT_PT = {"DAY": "DIA", "WEEK": "SEMANA", "MONTH": "MES", "YEAR": "ANO"}
 _TRUE = {"sim", "s", "true", "t", "1", "yes", "y", "x"}
 _FALSE = {"nao", "não", "n", "false", "f", "0", "no", ""}
-_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2}$")
 _TABLE_ID = re.compile(r"^[A-Z0-9_]{1,100}$")
 MAX_ROWS = 2000
 
 EXAMPLE_ROWS = [
-    ["FATO_VENDAS", "netezza", "sim", "DW.FATO_VENDAS", "ADMIN.SP_EXPORTA_TABELA", "MES", "1", "2", "240", "2", "não",
-     "2015-01-01", "2025-12-31", "Vendas diárias por cooperativa"],
-    ["FATO_SAUDE", "netezza", "sim", "DW.FATO_SAUDE", "ADMIN.SP_EXPORTA_TABELA", "MES", "3", "1", "480", "1", "não",
-     "01/01/2018", "31/12/2025", "Exemplo com subbloco trimestral e datas DD/MM/AAAA"],
-    ["FATO_DOC", "netezza", "sim", "DW.FATO_DOC", "ADMIN.SP_EXPORTA_TABELA", "DIA", "7", "4", "120", "2", "não",
-     "2024-01-01", "2025-12-31", "Exemplo com subbloco semanal (7 dias)"],
+    ["FATO_VENDAS", "netezza", "sim", "SP_CARGA_EVENTUAL", "SP_CARGA_EVENTUAL", "DWA", "FATO_VENDAS", "", "", "SK_DATA",
+     "YYYYMMDD", "MES", "1", "2", "240", "2", "não", "2015-01-01", "2025-12-31",
+     "Banco/esquema da external table vazios: usa o padrão da conexão"],
+    ["FATO_SAUDE", "netezza", "sim", "SP_CARGA_EVENTUAL", "SP_CARGA_EVENTUAL", "DWA", "FATO_SAUDE", "STAGE", "ADMIN",
+     "DT_REFERENCIA", "YYYYMMDD", "MES", "3", "1", "480", "1", "não", "01/01/2018", "31/12/2025",
+     "Subbloco trimestral; external table em STAGE.ADMIN"],
+    ["FATO_DOC", "netezza", "sim", "SP_CARGA_EVENTUAL", "SP_CARGA_EVENTUAL", "DWA", "FATO_DOC", "", "", "SK_DATA_DOC",
+     "YYYYMMDD", "DIA", "7", "4", "120", "2", "não", "2024-01-01", "2025-12-31", "Subbloco semanal (7 dias)"],
 ]
 
 
@@ -62,8 +72,10 @@ def export_csv(tables: list[dict]) -> str:
     w.writerow(FIELDS)
     for t in tables:
         w.writerow([
-            t["table_config_id"], t["source_id"], "sim" if t["active"] else "não", t["source_table"],
-            t["procedure_name"], _UNIT_PT[t["default_subblock_unit"]], t["default_subblock_size"], t["max_parallel"],
+            t["table_config_id"], t["source_id"], "sim" if t["active"] else "não", t.get("call_profile") or "",
+            t["procedure_name"], t.get("source_database") or "", t["source_table"], t.get("ext_database") or "",
+            t.get("ext_schema") or "", t.get("time_column") or "", t.get("date_format") or "YYYYMMDD",
+            _UNIT_PT[t["default_subblock_unit"]], t["default_subblock_size"], t["max_parallel"],
             t["call_timeout_min"], t["max_retries"], "sim" if t["retry_unknown"] else "não",
             t["migration_start"].isoformat() if t["migration_start"] else "",
             t["migration_end"].isoformat() if t["migration_end"] else "", t["description"] or ""])
@@ -124,7 +136,10 @@ def _date(v: str) -> date | None:
     raise ValueError(f"data inválida: {v!r} (use AAAA-MM-DD ou DD/MM/AAAA)")
 
 
-def parse(text: str, sources: list[str]) -> list[ParsedRow]:
+def parse(text: str, sources) -> list[ParsedRow]:
+    """sources: lista de ids ou dict id -> linha da conexão (para validar a chamada com os padrões dela)."""
+    source_rows = sources if isinstance(sources, dict) else {s: {} for s in sources}
+    sources = list(source_rows)
     """Lê e valida o CSV. Não consulta o estado atual; a classificação nova/versão é feita depois."""
     text = text.lstrip("﻿")
     if not text.strip():
@@ -171,12 +186,21 @@ def parse(text: str, sources: list[str]) -> list[ParsedRow]:
             r.errors.append(f"source_id: origem {src!r} não cadastrada ({', '.join(sources) or 'nenhuma'})")
         v["source_id"] = src
         check("active", lambda s: _bool(s, True))
-        v["source_table"] = raw.get("source_table", "")
+        profile = (raw.get("call_profile") or DEFAULT_PROFILE).upper()
+        if profile not in PROFILES:
+            r.errors.append(f"call_profile: use {' ou '.join(PROFILES)} (recebido {profile!r})")
+        v["call_profile"] = profile if profile in PROFILES else DEFAULT_PROFILE
+        v["procedure_name"] = (raw.get("procedure_name") or PROFILES[v["call_profile"]]["default_procedure"]).upper()
+        for k in ("source_database", "source_table", "ext_database", "ext_schema", "time_column"):
+            v[k] = (raw.get(k) or "").upper() or None
+        fmt = (raw.get("date_format") or "YYYYMMDD").upper()
+        if fmt not in DATE_FORMATS:
+            r.errors.append(f"date_format: use YYYYMMDD ou YYYY-MM-DD (recebido {fmt!r})")
+        v["date_format"] = fmt if fmt in DATE_FORMATS else "YYYYMMDD"
         if not v["source_table"]:
             r.errors.append("source_table: obrigatório")
-        v["procedure_name"] = raw.get("procedure_name", "")
-        if not _IDENT.match(v["procedure_name"]):
-            r.errors.append("procedure_name: obrigatório, no formato [BANCO.][SCHEMA.]NOME")
+        elif v["call_profile"] in PROFILES and fmt in DATE_FORMATS:
+            r.errors += [f"chamada: {e}" for e in validate_table_config(v, source_rows.get(src) or {})]
         unit = (raw.get("default_subblock_unit") or "MES").upper()
         if unit not in _UNIT_ALIASES:
             r.errors.append(f"default_subblock_unit: use DIA, SEMANA, MES ou ANO (recebido {unit!r})")

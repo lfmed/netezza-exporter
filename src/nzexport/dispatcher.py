@@ -17,7 +17,8 @@ from datetime import date
 from databricks.sdk import WorkspaceClient
 
 from .db import Database
-from .procedure import CallSpec, ConnectError, OutcomeUnknown, ProcedureError, build_client
+from .procedure import (CallSpec, ConfigError, ConnectError, OutcomeUnknown, ProcedureError, build_call,
+                        build_client)
 from .repo import log_event
 
 log = logging.getLogger("nzexport.dispatcher")
@@ -37,11 +38,9 @@ class Work:
     source_id: str
     attempt_no: int
     attempt_id: str
-    procedure_name: str
-    source_table: str
+    spec: CallSpec
     data_ini: date
     data_fim: date
-    timeout_s: int
     max_retries: int
     retry_unknown: bool
 
@@ -139,7 +138,7 @@ class Dispatcher:
         with self.db.tx() as conn:
             # trava as origens: serializa claims concorrentes e garante o limite global
             sources = {s["source_id"]: s for s in
-                       conn.execute("SELECT source_id, max_sessions FROM source_connection FOR UPDATE").fetchall()}
+                       conn.execute("SELECT * FROM source_connection FOR UPDATE").fetchall()}
             running = conn.execute("""
                 SELECT s.request_id, s.table_config_id, tc.source_id, count(*) AS n
                 FROM export_subblock s JOIN table_config tc USING (table_config_id)
@@ -154,7 +153,9 @@ class Dispatcher:
                 SELECT s.subblock_id, s.request_id, s.request_table_id, s.table_config_id, s.attempts,
                        lower(s.data_range) AS data_ini, upper(s.data_range) - 1 AS data_fim,
                        r.max_parallel AS req_max, tc.source_id, v.max_parallel AS tbl_max,
-                       v.procedure_name, v.source_table, v.call_timeout_min, v.max_retries, v.retry_unknown
+                       v.call_profile, v.procedure_name, v.source_database, v.source_table, v.ext_database,
+                       v.ext_schema, v.time_column, v.date_format,
+                       v.call_timeout_min, v.max_retries, v.retry_unknown
                 FROM export_subblock s
                 JOIN export_request r USING (request_id)
                 JOIN export_request_table rt USING (request_table_id)
@@ -188,22 +189,30 @@ class Dispatcher:
             works = []
             for c in picked:
                 attempt_no = c["attempts"] + 1
+                try:
+                    spec = build_call(c, sources[c["source_id"]], c["data_ini"], c["data_fim"])
+                    config_error = None
+                except ConfigError as e:
+                    spec, config_error = None, str(e)
                 conn.execute(f"""
                     UPDATE export_subblock SET status = 'RUNNING', attempts = %s, lease_owner = %s,
                            lease_expires_at = now() + interval '{LEASE_S} seconds', started_at = now(),
                            finished_at = NULL, next_attempt_at = NULL, updated_at = now()
                     WHERE subblock_id = %s""", (attempt_no, self.owner, c["subblock_id"]))
-                spec = CallSpec(c["procedure_name"], c["source_table"], c["data_ini"], c["data_fim"],
-                                c["call_timeout_min"] * 60)
                 att = conn.execute("""
                     INSERT INTO export_attempt (subblock_id, attempt_no, databricks_run_id, worker, status,
-                                                call_statement)
-                    VALUES (%s,%s,%s,%s,'RUNNING',%s) RETURNING attempt_id""",
-                    (c["subblock_id"], attempt_no, self.run_id, self.owner, spec.describe())).fetchone()
-                works.append(Work(str(c["subblock_id"]), str(c["request_id"]), str(c["request_table_id"]),
-                                  c["table_config_id"], c["source_id"], attempt_no, str(att["attempt_id"]),
-                                  c["procedure_name"], c["source_table"], c["data_ini"], c["data_fim"],
-                                  c["call_timeout_min"] * 60, c["max_retries"], c["retry_unknown"]))
+                                                call_statement, output_object)
+                    VALUES (%s,%s,%s,%s,'RUNNING',%s,%s) RETURNING attempt_id""",
+                    (c["subblock_id"], attempt_no, self.run_id, self.owner,
+                     spec.describe() if spec else None, spec.output_object if spec else None)).fetchone()
+                work = Work(str(c["subblock_id"]), str(c["request_id"]), str(c["request_table_id"]),
+                            c["table_config_id"], c["source_id"], attempt_no, str(att["attempt_id"]),
+                            spec, c["data_ini"], c["data_fim"], c["max_retries"], c["retry_unknown"])
+                if config_error:
+                    # cadastro inválido: falha definitiva sem chamar o Netezza
+                    self._complete(work, "FAILED", "CONFIG", config_error, conn=conn)
+                    continue
+                works.append(work)
             if works:
                 conn.execute("""UPDATE export_request SET status = 'RUNNING', started_at = coalesce(started_at, now()),
                                 updated_at = now() WHERE request_id = ANY(%s) AND status = 'SUBMITTED'""",
@@ -235,20 +244,21 @@ class Dispatcher:
         return base64.b64decode(self.w.secrets.get_secret(scope=scope, key=key).value).decode()
 
     def _execute(self, work: Work, stats: Counter):
-        spec = CallSpec(work.procedure_name, work.source_table, work.data_ini, work.data_fim, work.timeout_s)
-        outcome, err_class, err = "SUCCEEDED", None, None
+        outcome, err_class, err, result = "SUCCEEDED", None, None, None
         try:
-            self._client(work.source_id).call(spec)
+            result = self._client(work.source_id).call(work.spec)
         except OutcomeUnknown as e:
             outcome, err_class, err = "UNKNOWN", "OUTCOME_UNKNOWN", str(e)
         except ConnectError as e:
             outcome, err_class, err = "FAILED", "CONNECT", str(e)
+        except ConfigError as e:
+            outcome, err_class, err = "FAILED", "CONFIG", str(e)
         except ProcedureError as e:
             outcome, err_class, err = "FAILED", "PROCEDURE", str(e)
         except Exception as e:  # noqa: BLE001
             outcome, err_class, err = "FAILED", "INTERNAL", f"{type(e).__name__}: {e}"
         try:
-            self._complete(work, outcome, err_class, err)
+            self._complete(work, outcome, err_class, err, result=result)
             stats[outcome.lower()] += 1
         except Exception:  # noqa: BLE001
             log.exception("falha ao gravar resultado do subbloco %s", work.subblock_id)
@@ -256,29 +266,33 @@ class Dispatcher:
             with self.lock:
                 self.in_flight.pop(work.subblock_id, None)
 
-    def _complete(self, work: Work, outcome: str, err_class: str | None, err: str | None):
-        with self.db.tx() as conn:
-            conn.execute("""UPDATE export_attempt SET status = %s, finished_at = now(), error_class = %s,
-                            error_message = %s WHERE attempt_id = %s""",
-                         (outcome, err_class, err, work.attempt_id))
-            # condicional ao número da tentativa: se o reaper marcou UNKNOWN, o resultado real prevalece
-            guard = "WHERE subblock_id = %s AND attempts = %s AND status IN ('RUNNING','UNKNOWN')"
-            if outcome == "SUCCEEDED":
-                conn.execute(f"""UPDATE export_subblock SET status = 'DONE', finished_at = now(), last_error = NULL,
-                                 lease_owner = NULL, lease_expires_at = NULL, updated_at = now() {guard}""",
-                             (work.subblock_id, work.attempt_no))
-                return
-            retry = work.attempt_no <= work.max_retries and (outcome == "FAILED" or work.retry_unknown)
-            new_status = "PENDING" if retry else outcome
-            next_at = _backoff_sql(work.attempt_no) if retry else "NULL"
-            conn.execute(f"""UPDATE export_subblock SET status = %s, next_attempt_at = {next_at},
-                             finished_at = now(), last_error = %s, lease_owner = NULL, lease_expires_at = NULL,
-                             updated_at = now() {guard}""",
-                         (new_status, f"[{err_class}] {err}", work.subblock_id, work.attempt_no))
-            log_event(conn, work.request_id, f"SUBBLOCK_{outcome}", ACTOR,
-                      {"attempt": work.attempt_no, "error_class": err_class, "error": (err or "")[:500],
-                       "next_status": new_status, "data_ini": work.data_ini, "data_fim": work.data_fim},
-                      work.subblock_id)
+    def _complete(self, work: Work, outcome: str, err_class: str | None, err: str | None,
+                  result: str | None = None, conn=None):
+        if conn is None:
+            with self.db.tx() as c:
+                return self._complete(work, outcome, err_class, err, result=result, conn=c)
+        conn.execute("""UPDATE export_attempt SET status = %s, finished_at = now(), error_class = %s,
+                        error_message = %s, call_result = %s WHERE attempt_id = %s""",
+                     (outcome, err_class, err, result, work.attempt_id))
+        # condicional ao número da tentativa: se o reaper marcou UNKNOWN, o resultado real prevalece
+        guard = "WHERE subblock_id = %s AND attempts = %s AND status IN ('RUNNING','UNKNOWN')"
+        if outcome == "SUCCEEDED":
+            conn.execute(f"""UPDATE export_subblock SET status = 'DONE', finished_at = now(), last_error = NULL,
+                             lease_owner = NULL, lease_expires_at = NULL, updated_at = now() {guard}""",
+                         (work.subblock_id, work.attempt_no))
+            return
+        retry = (work.attempt_no <= work.max_retries and err_class != "CONFIG"
+                 and (outcome == "FAILED" or work.retry_unknown))
+        new_status = "PENDING" if retry else outcome
+        next_at = _backoff_sql(work.attempt_no) if retry else "NULL"
+        conn.execute(f"""UPDATE export_subblock SET status = %s, next_attempt_at = {next_at},
+                         finished_at = now(), last_error = %s, lease_owner = NULL, lease_expires_at = NULL,
+                         updated_at = now() {guard}""",
+                     (new_status, f"[{err_class}] {err}", work.subblock_id, work.attempt_no))
+        log_event(conn, work.request_id, f"SUBBLOCK_{outcome}", ACTOR,
+                  {"attempt": work.attempt_no, "error_class": err_class, "error": (err or "")[:500],
+                   "next_status": new_status, "data_ini": work.data_ini, "data_fim": work.data_fim},
+                  work.subblock_id)
 
     # ------------------------------------------------------------ reconciliação
     def _reap_expired(self, stats: Counter):
