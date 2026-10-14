@@ -16,9 +16,6 @@
     <div class="row">
       <label>Identificador<input name="source_id" value="{{ s.source_id if s else '' }}" {{ 'readonly' if s }} required placeholder="netezza-prod"></label>
       <label class="grow">Nome de exibição<input name="display_name" value="{{ s.display_name if s else '' }}" placeholder="Netezza produção"></label>
-      <label>Driver<select name="driver" id="driver">
-        <option value="nzpy" {{ 'selected' if not s or s.driver == 'nzpy' }}>nzpy (Netezza real)</option>
-        <option value="fake" {{ 'selected' if s and s.driver == 'fake' }}>fake (simulação, sem Netezza)</option></select></label>
     </div>
     <div class="row">
       <label class="grow">Host<input name="host" value="{{ s.host or '' if s else '' }}" placeholder="netezza.sicoob.local"></label>
@@ -38,8 +35,7 @@
     <h2>Credenciais</h2>
     {% if s %}
     <p style="margin-top:0">
-      {% if s.driver == 'fake' %}<span class="badge">não exigidas no driver simulado</span>
-      {% elif creds.error %}<span class="badge s-unknown">não foi possível verificar o secret scope</span>
+      {% if creds.error %}<span class="badge s-unknown">não foi possível verificar o secret scope</span>
       {% elif creds.user and creds.password %}<span class="badge s-done">usuário e senha definidos</span>
       {% else %}<span class="badge s-failed">credenciais incompletas</span>{% endif %}
       {% if s.credentials_set_at %}<br><small class="muted">última alteração {{ s.credentials_set_at|dt }} por {{ s.credentials_set_by }}</small>{% endif %}
@@ -62,16 +58,6 @@
   </div>
 </div>
 
-<div class="card" id="fake-opts">
-  <h2>Simulação (driver fake)</h2>
-  {% set o = s.driver_options if s else {} %}
-  <div class="row">
-    <label>Duração mín. (s)<input name="min_s" value="{{ o.get('min_s', '') }}" style="width:6em"></label>
-    <label>Duração máx. (s)<input name="max_s" value="{{ o.get('max_s', '') }}" style="width:6em"></label>
-    <label>% falha<input name="fail_pct" value="{{ o.get('fail_pct', '') }}" style="width:6em"></label>
-    <label>% desconhecido<input name="unknown_pct" value="{{ o.get('unknown_pct', '') }}" style="width:6em"></label>
-  </div>
-</div>
 <div class="actions end"><a class="btn ghost" href="{{ url_for('admin') }}">Voltar</a><button class="btn">Salvar conexão</button></div>
 </form>
 
@@ -92,9 +78,6 @@
 {% block scripts %}
 <script>
 (function () {
-  const drv = document.getElementById('driver'), fake = document.getElementById('fake-opts');
-  const sync = () => { fake.style.display = drv.value === 'fake' ? '' : 'none'; };
-  drv.addEventListener('change', sync); sync();
   const tests = document.getElementById('tests');
   if (tests && tests.dataset.live === '1') setTimeout(() => location.reload(), 8000);
 })();

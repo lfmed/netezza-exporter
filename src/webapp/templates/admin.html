@@ -6,18 +6,17 @@
 <div class="card">
   <div class="split"><h2>🔌 Conexões Netezza</h2><a class="btn" href="{{ url_for('admin_source_form') }}">+ Nova conexão</a></div>
   <table class="grid">
-    <thead><tr><th>Conexão</th><th>Driver</th><th>Servidor</th><th>Credenciais</th><th>Padrões da procedure</th><th>Limite global</th><th>Último teste</th><th></th></tr></thead>
+    <thead><tr><th>Conexão</th><th>Servidor</th><th>Credenciais</th><th>Padrões da procedure</th><th>Limite global</th><th>Último teste</th><th></th></tr></thead>
     <tbody>{% for s in sources %}
       {% set lt = last_tests.get(s.source_id) %}
       <tr><td><a href="{{ url_for('admin_source_form', source_id=s.source_id) }}"><b>{{ s.display_name }}</b></a><br><small class="muted">{{ s.source_id }}</small></td>
-        <td>{% if s.driver == 'fake' %}<span class="badge s-unknown">simulado</span>{% else %}<span class="badge s-running">nzpy</span>{% endif %}</td>
         <td><small>{{ s.host or '—' }}{% if s.host %}:{{ s.port }}{% endif %}<br>banco {{ s.database or '—' }}</small></td>
-        <td>{% if s.credentials_set_at %}<small>definidas em {{ s.credentials_set_at|dt }}</small>{% elif s.driver == 'fake' %}<small class="muted">não exigidas</small>{% else %}<span class="badge s-failed">não definidas</span>{% endif %}</td>
+        <td>{% if s.credentials_set_at %}<small>definidas em {{ s.credentials_set_at|dt }}</small>{% else %}<span class="badge s-failed">não definidas</span>{% endif %}</td>
         <td><small>p_banco <code>{{ s.default_source_database or '—' }}</code><br>ext. <code>{{ s.default_ext_database or '—' }}.{{ s.default_ext_schema or '—' }}</code></small></td>
         <td>{{ s.max_sessions }}</td>
         <td>{% if lt %}{% if lt.status == 'OK' %}<span class="badge s-done">OK</span>{% elif lt.status == 'FAILED' %}<span class="badge s-failed">Falhou</span>{% else %}<span class="badge s-running">em andamento</span>{% endif %}<br><small class="muted">{{ lt.requested_at|dt }}</small>{% else %}—{% endif %}</td>
         <td><a class="btn ghost small" href="{{ url_for('admin_source_form', source_id=s.source_id) }}">Configurar</a></td></tr>
-    {% else %}<tr><td colspan="8" class="empty">Nenhuma conexão. <a href="{{ url_for('admin_source_form') }}">Configurar a conexão Netezza</a></td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="7" class="empty">Nenhuma conexão. <a href="{{ url_for('admin_source_form') }}">Configurar a conexão Netezza</a></td></tr>{% endfor %}</tbody>
   </table>
 </div>
 

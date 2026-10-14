@@ -445,7 +445,7 @@ def create_app() -> Flask:
         try:
             if not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", sid):
                 raise ValueError("identificador: letras minúsculas, números, _ ou - (ex.: netezza-prod)")
-            driver = f.get("driver") if f.get("driver") in ("fake", "nzpy") else "nzpy"
+            driver = "nzpy"
             ident = lambda k: (f.get(k) or "").strip().upper() or None  # noqa: E731
             for k in ("database", "default_source_database", "default_ext_database", "default_ext_schema"):
                 if ident(k) and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]{0,127}", ident(k)):
@@ -453,12 +453,8 @@ def create_app() -> Flask:
             host = (f.get("host") or "").strip()
             if host and not re.fullmatch(r"[A-Za-z0-9.\-]{1,253}", host):
                 raise ValueError("host inválido")
-            if driver == "nzpy" and (not host or not ident("database")):
-                raise ValueError("para o driver nzpy, informe host e banco da sessão")
-            opts = {}
-            for k in ("min_s", "max_s", "fail_pct", "unknown_pct"):
-                if f.get(k):
-                    opts[k] = float(f[k])
+            if not host or not ident("database"):
+                raise ValueError("informe host e banco da sessão")
             fields = dict(display_name=(f.get("display_name") or sid).strip(), driver=driver, host=host or None,
                           port=_int(f.get("port"), 5480, 1, 65535), database=ident("database"),
                           security_level=_int(f.get("security_level"), 1, 0, 3),
@@ -466,7 +462,7 @@ def create_app() -> Flask:
                           max_sessions=_int(f.get("max_sessions"), lo=1, hi=200),
                           default_source_database=ident("default_source_database"),
                           default_ext_database=ident("default_ext_database"),
-                          default_ext_schema=ident("default_ext_schema"), driver_options=opts)
+                          default_ext_schema=ident("default_ext_schema"))
             user, password = (f.get("nz_user") or "").strip(), f.get("nz_password") or ""
             if user or password:
                 services.put_credentials(sid, user or None, password or None)

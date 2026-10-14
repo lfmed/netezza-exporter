@@ -7,14 +7,24 @@ SET search_path = nzexport, public;
 CREATE TABLE IF NOT EXISTS source_connection (
   source_id        text PRIMARY KEY,
   display_name     text NOT NULL,
-  driver           text NOT NULL DEFAULT 'fake' CHECK (driver IN ('fake', 'nzpy')),
+  driver           text NOT NULL DEFAULT 'nzpy',
   secret_scope     text,               -- chaves: host, port, database, user, password
   max_sessions     int  NOT NULL DEFAULT 4 CHECK (max_sessions BETWEEN 1 AND 200),
   connect_timeout_s int NOT NULL DEFAULT 30,
-  driver_options   jsonb NOT NULL DEFAULT '{}'::jsonb,  -- fake: min_s, max_s, fail_pct
   updated_at       timestamptz NOT NULL DEFAULT now(),
   updated_by       text
 );
+
+-- Sem driver simulado: toda conexão é nzpy (Netezza real)
+UPDATE source_connection SET driver = 'nzpy' WHERE driver <> 'nzpy';
+ALTER TABLE source_connection DROP CONSTRAINT IF EXISTS source_connection_driver_check;
+ALTER TABLE source_connection ALTER COLUMN driver SET DEFAULT 'nzpy';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'source_connection_driver_nzpy') THEN
+    ALTER TABLE source_connection ADD CONSTRAINT source_connection_driver_nzpy CHECK (driver = 'nzpy');
+  END IF;
+END $$;
+ALTER TABLE source_connection DROP COLUMN IF EXISTS driver_options;
 
 -- Parâmetros da conexão Netezza (usuário e senha ficam no secret scope, nunca no banco)
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS host text;

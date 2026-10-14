@@ -93,29 +93,6 @@ resources:
               - psycopg-pool>=3.2
               - databricks-sdk>=0.81
 
-    nzexport_hook_example:
-      name: nzexport-hook-example
-      description: Exemplo de job acionado pelo hook pós-exportação (substituir pela importação para Delta).
-      parameters:
-        - { name: request_id, default: "" }
-        - { name: trigger_level, default: "" }
-        - { name: request_table_id, default: "" }
-        - { name: table_config_id, default: "" }
-        - { name: data_ini, default: "" }
-        - { name: data_fim, default: "" }
-      tasks:
-        - task_key: hook
-          environment_key: default
-          spark_python_task:
-            python_file: ./src/hook_example.py
-            parameters: ["--request_id", "{{job.parameters.request_id}}", "--trigger_level", "{{job.parameters.trigger_level}}",
-                         "--request_table_id", "{{job.parameters.request_table_id}}", "--table_config_id", "{{job.parameters.table_config_id}}",
-                         "--data_ini", "{{job.parameters.data_ini}}", "--data_fim", "{{job.parameters.data_fim}}"]
-      environments:
-        - environment_key: default
-          spec:
-            environment_version: "3"
-
   apps:
     nzexport_app:
       name: netezza-exporter

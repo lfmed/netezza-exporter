@@ -10,3 +10,4 @@ __pycache__/
 scripts/.gunicorn.log
 scripts/screenshots/
 scripts/ref_marketplace/
+scripts/ref_plhdwa/

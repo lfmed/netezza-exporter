@@ -39,26 +39,8 @@ def list_sources(db: Database):
     return db.query("SELECT * FROM source_connection ORDER BY source_id")
 
 
-def save_source(db: Database, actor: str, source_id: str, display_name: str, driver: str,
-                secret_scope: str | None, max_sessions: int, connect_timeout_s: int, driver_options: dict):
-    with db.tx() as conn:
-        conn.execute("""
-            INSERT INTO source_connection (source_id, display_name, driver, secret_scope, max_sessions,
-                                           connect_timeout_s, driver_options, updated_by)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (source_id) DO UPDATE SET display_name = EXCLUDED.display_name, driver = EXCLUDED.driver,
-              secret_scope = EXCLUDED.secret_scope, max_sessions = EXCLUDED.max_sessions,
-              connect_timeout_s = EXCLUDED.connect_timeout_s, driver_options = EXCLUDED.driver_options,
-              updated_by = EXCLUDED.updated_by, updated_at = now()""",
-            (source_id, display_name, driver, secret_scope or None, max_sessions, connect_timeout_s,
-             json.dumps(driver_options), actor))
-        log_event(conn, None, "SOURCE_SAVED", actor, {"source_id": source_id, "driver": driver,
-                                                     "max_sessions": max_sessions})
-
-
 CONNECTION_FIELDS = ("display_name", "driver", "host", "port", "database", "security_level", "connect_timeout_s",
-                     "max_sessions", "default_source_database", "default_ext_database", "default_ext_schema",
-                     "driver_options")
+                     "max_sessions", "default_source_database", "default_ext_database", "default_ext_schema")
 
 
 def get_source(db: Database, source_id: str):
@@ -68,7 +50,7 @@ def get_source(db: Database, source_id: str):
 def save_connection(db: Database, actor: str, source_id: str, fields: dict, secret_scope: str | None = None,
                     credentials_changed: bool = False):
     """Grava os parâmetros da conexão (sem credenciais; usuário/senha ficam no secret scope)."""
-    vals = [json.dumps(fields[f]) if f == "driver_options" else fields.get(f) for f in CONNECTION_FIELDS]
+    vals = [fields.get(f) for f in CONNECTION_FIELDS]
     with db.tx() as conn:
         conn.execute(f"""
             INSERT INTO source_connection (source_id, {', '.join(CONNECTION_FIELDS)}, secret_scope, updated_by)

@@ -33,10 +33,7 @@ def main():
         try:
             client = build_client(source, secrets_reader=lambda scope, key: base64.b64decode(
                 w.secrets.get_secret(scope=scope, key=key).value).decode())
-            if hasattr(client, "conn_params"):
-                results = client.test(repo.procedure_checks(db, a.source_id))
-            else:
-                results = client.test()
+            results = client.test(repo.procedure_checks(db, a.source_id))
         except ConnectError as e:
             results = [{"check": "conexão", "ok": False, "detail": str(e)}]
         ok = bool(results) and results[0]["ok"] and all(r["ok"] for r in results)

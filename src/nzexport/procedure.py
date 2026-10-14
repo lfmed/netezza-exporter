@@ -9,10 +9,8 @@ A procedure grava os arquivos por conta própria; o retorno sem exceção signif
 Todos os valores são validados (identificadores e datas) antes de montar o comando, porque o nzpy
 substitui parâmetros sem escapar e a procedure concatena os valores em SQL dinâmico.
 """
-import random
 import re
 import socket
-import time
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -136,33 +134,6 @@ def validate_table_config(cfg: dict, source: dict | None) -> list[str]:
         return str(e).split("; ")
 
 
-class FakeProcedureClient:
-    """Simula a procedure para desenvolvimento e testes sem Netezza."""
-
-    def __init__(self, options: dict | None = None, **_):
-        o = options or {}
-        self.min_s = float(o.get("min_s", 2))
-        self.max_s = float(o.get("max_s", 8))
-        self.fail_pct = float(o.get("fail_pct", 0))
-        self.unknown_pct = float(o.get("unknown_pct", 0))
-
-    def call(self, spec: CallSpec, should_abort=lambda: False) -> str | None:
-        spec.statement()
-        duration = random.uniform(self.min_s, self.max_s)
-        deadline = time.time() + duration
-        while time.time() < deadline:
-            time.sleep(min(0.5, max(0, deadline - time.time())))
-        roll = random.uniform(0, 100)
-        if roll < self.fail_pct:
-            raise ProcedureError(f"[fake] erro simulado na procedure para {spec.args[1] if len(spec.args) > 1 else spec.args[0]}")
-        if roll < self.fail_pct + self.unknown_pct:
-            raise OutcomeUnknown("[fake] conexão perdida após o envio")
-        return "[fake] ok"
-
-    def test(self) -> list[dict]:
-        return [{"check": "conexão", "ok": True, "detail": "driver simulado (fake): nenhuma conexão real é feita"}]
-
-
 class NzpyProcedureClient:
     def __init__(self, conn_params: dict, connect_timeout_s: int = 30, **_):
         self.conn_params = conn_params
@@ -259,9 +230,7 @@ def _mask(msg: str, params: dict) -> str:
 
 
 def build_client(source: dict, secrets_reader=None):
-    if source["driver"] == "fake":
-        return FakeProcedureClient(options=source.get("driver_options") or {})
-    if source["driver"] == "nzpy":
+    if source.get("driver", "nzpy") == "nzpy":
         scope = source.get("secret_scope")
         if not scope or secrets_reader is None:
             raise ConnectError("conexão nzpy sem credenciais configuradas (usuário/senha)")

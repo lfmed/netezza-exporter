@@ -6,7 +6,7 @@ precisa saber se ela terminou: retorno sem exceção significa concluído.
 
 - **App**: https://netezza-exporter-7474646973581105.aws.databricksapps.com (workspace `fe-vm-stable-classic-pg4xe1`)
 - **Lakebase**: projeto `netezza-exporter`, branch `production`, schema `nzexport`
-- **Jobs**: `nzexport-dispatcher` (fila e chamadas da procedure) e `nzexport-hook-example` (exemplo de hook)
+- **Jobs**: `nzexport-dispatcher` (fila e chamadas da procedure) e `nzexport-conn-test` (teste de conexão)
 
 ## Arquitetura
 
@@ -73,13 +73,11 @@ databricks bundle deploy --profile $P            # app + jobs
 databricks bundle run nzexport_app --profile $P  # publica o código do app
 .venv/bin/python scripts/migrate_local.py --grant-role <sp_client_id>   # schema + grants (o job também aplica a cada run)
 .venv/bin/python -m pytest -q tests              # testes do planner
-.venv/bin/python scripts/smoke_local.py          # E2E local com procedure simulada
 ```
 
-## Ligar no Netezza real (hoje a conexão usa o driver `fake`)
+## Configurar o Netezza
 
 1. Em **🔌 Conexão Netezza**, informe:
-   - driver `nzpy`;
    - host, porta (5480), banco da sessão, TLS, timeout e limite global de sessões;
    - **usuário e senha**, que são gravados no secret scope `nzexport-netezza` e nunca no banco do app;
    - os **padrões** de `p_banco`, `p_banco_ext_table` e `p_esquema_ext_table`.
@@ -119,8 +117,8 @@ CALL SP_CARGA_EVENTUAL(p_banco, p_tabela, p_banco_ext_table, p_esquema_ext_table
 
 ## Estrutura
 
-- `src/nzexport/`: núcleo com `schema.sql`, `planner.py` (subblocos), `procedure.py` (fake/nzpy), `repo.py` e `dispatcher.py`
+- `src/nzexport/`: núcleo com `schema.sql`, `planner.py` (subblocos), `procedure.py` (chamada via nzpy), `repo.py` e `dispatcher.py`
 - `src/webapp/`: app Flask e templates Jinja
-- `src/run_dispatcher.py`, `src/hook_example.py`: entrypoints dos jobs
+- `src/run_dispatcher.py`, `src/run_conn_test.py`: entrypoints dos jobs
 - `scripts/`: migração local e smoke test
 - `revisao_especificacao.md`: revisão crítica da especificação original

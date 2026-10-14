@@ -8,8 +8,8 @@ from .db import LakebaseConfig, SCHEMA
 SCHEMA_SQL = Path(__file__).with_name("schema.sql")
 
 SEED_SQL = """
-INSERT INTO source_connection (source_id, display_name, driver, max_sessions, driver_options)
-VALUES ('netezza', 'Netezza (simulado)', 'fake', 4, '{"min_s": 3, "max_s": 12, "fail_pct": 0}')
+INSERT INTO source_connection (source_id, display_name, driver, max_sessions)
+VALUES ('netezza', 'Netezza', 'nzpy', 4)
 ON CONFLICT DO NOTHING;
 """
 
