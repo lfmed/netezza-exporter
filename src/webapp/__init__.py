@@ -10,9 +10,10 @@ from flask import Flask, Response, abort, flash, jsonify, redirect, render_templ
 
 from nzexport import repo, table_csv
 from nzexport.planner import UNITS
-from nzexport.procedure import DATE_FORMATS, DEFAULT_PROFILE, PROFILES, build_call, validate_table_config
+from nzexport.procedure import (DATE_FORMATS, DEFAULT_PROFILE, PROFILES, build_call, validate_destination,
+                                validate_table_config)
 
-from . import services
+from . import catalog, services
 
 log = logging.getLogger("nzexport.app")
 APP_VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text().strip()
@@ -514,6 +515,9 @@ def create_app() -> Flask:
                 ext_database=(f.get("ext_database") or "").strip().upper() or None,
                 ext_schema=(f.get("ext_schema") or "").strip().upper() or None,
                 time_column=(f.get("time_column") or "").strip().upper() or None,
+                dest_catalog=(f.get("dest_catalog") or "").strip() or None,
+                dest_schema=(f.get("dest_schema") or "").strip() or None,
+                dest_table=(f.get("dest_table") or "").strip() or None,
                 date_format=f.get("date_format") or "YYYYMMDD",
                 source_table=f["source_table"].strip().upper(), procedure_name=f["procedure_name"].strip().upper(),
                 default_subblock_unit=f["default_subblock_unit"],
@@ -526,7 +530,7 @@ def create_app() -> Flask:
                 description=f.get("description") or None)
             db = services.db()
             source = next((x for x in repo.list_sources(db) if x["source_id"] == f["source_id"]), None)
-            errors = validate_table_config(fields, source)
+            errors = validate_table_config(fields, source) + validate_destination(fields)
             if errors:
                 raise ValueError("cadastro da chamada incompleto: " + "; ".join(errors))
             v = repo.save_table(db, _user(), tid, f["source_id"], f.get("active") == "1", fields)
@@ -608,6 +612,32 @@ def create_app() -> Flask:
         except (ValueError, KeyError) as e:
             flash(f"Erro: {e}", "error")
         return redirect(url_for("admin"))
+
+    # ------------------------------------------------------------ navegador do Unity Catalog
+    def _uc(fn, *args):
+        try:
+            return jsonify({"ok": True, "items": fn(*args)})
+        except Exception as e:  # noqa: BLE001 - sem permissão / catálogo inexistente
+            return jsonify({"ok": False, "error": str(e)[:400]}), 200
+
+    @app.get("/api/uc/catalogs")
+    def api_uc_catalogs():
+        return _uc(catalog.catalogs)
+
+    @app.get("/api/uc/schemas")
+    def api_uc_schemas():
+        return _uc(catalog.schemas, request.args.get("catalog", ""))
+
+    @app.get("/api/uc/tables")
+    def api_uc_tables():
+        return _uc(catalog.tables, request.args.get("catalog", ""), request.args.get("schema", ""))
+
+    @app.get("/api/uc/table")
+    def api_uc_table():
+        name = request.args.get("name", "")
+        if not re.fullmatch(r"[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+", name):
+            return jsonify({"exists": False, "error": "use catálogo.schema.tabela"})
+        return jsonify(catalog.table_info(name))
 
     # ------------------------------------------------------------ API mínima
     @app.get("/api/requests/<request_id>")

@@ -75,9 +75,18 @@ def test_classify_new_version_and_unchanged():
 def test_export_roundtrip():
     t = {"table_config_id": "FATO_Z", "source_id": "netezza", "active": False, "source_table": "DW.Z",
          "call_profile": "TABELA_INI_FIM", "source_database": None, "ext_database": None, "ext_schema": None,
-         "time_column": None, "date_format": "YYYYMMDD", "procedure_name": "ADMIN.SP", "default_subblock_unit": "YEAR", "default_subblock_size": 1, "max_parallel": 3,
+         "time_column": None, "date_format": "YYYYMMDD", "procedure_name": "ADMIN.SP",
+         "dest_catalog": "cat", "dest_schema": "sch", "dest_table": "fato_z", "default_subblock_unit": "YEAR", "default_subblock_size": 1, "max_parallel": 3,
          "call_timeout_min": 60, "max_retries": 0, "retry_unknown": False, "migration_start": date(2020, 1, 1),
          "migration_end": date(2020, 12, 31), "description": None}
     r = table_csv.parse(table_csv.export_csv([t]), ["netezza"])[0]
     assert not r.errors
     assert table_csv.classify([r], {"FATO_Z": t})[0].action == "SEM_ALTERACAO"
+
+
+def test_destination_must_be_complete_and_simple():
+    head = "table_config_id;source_table;time_column;dest_catalog;dest_schema;dest_table\n"
+    r = table_csv.parse(head + "FATO_D;FATO_D;SK;cat;;tab-x\n", DEFAULTS)[0]
+    assert any("dest_schema: não informado" in e for e in r.errors) and any("dest_table: nome inválido" in e for e in r.errors)
+    r = table_csv.parse(head + "FATO_D;FATO_D;SK;migracao;bronze;fato_d\n", DEFAULTS)[0]
+    assert not r.errors and r.values["dest_table"] == "fato_d"

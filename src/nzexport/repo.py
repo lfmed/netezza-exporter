@@ -122,7 +122,8 @@ def get_table(db: Database, table_config_id: str):
 
 
 TABLE_VERSION_FIELDS = ("call_profile", "source_database", "source_table", "ext_database", "ext_schema",
-                        "time_column", "date_format", "procedure_name", "default_subblock_unit",
+                        "time_column", "date_format", "procedure_name", "dest_catalog", "dest_schema", "dest_table",
+                        "default_subblock_unit",
                         "default_subblock_size", "max_parallel", "call_timeout_min", "max_retries", "retry_unknown",
                         "migration_start", "migration_end", "description")
 

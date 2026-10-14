@@ -80,6 +80,10 @@ DO $$ BEGIN
     ALTER TABLE table_config_version ALTER COLUMN date_format SET DEFAULT 'YYYYMMDD';
   END IF;
 END $$;
+-- Destino no Databricks (Unity Catalog): tabela Delta que recebe o .dat de cada subbloco
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS dest_catalog text;
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS dest_schema text;
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS dest_table text;
 ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS migration_start date;
 ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS migration_end date;
 ALTER TABLE table_config_version DROP COLUMN IF EXISTS expected_periodicity_unit;

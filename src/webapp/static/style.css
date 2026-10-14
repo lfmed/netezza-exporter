@@ -133,3 +133,11 @@ details summary { cursor: pointer; color: var(--teal-d); margin: 8px 0; font-wei
 .grid th.sortable[data-dir="desc"]::after { content: " ▼"; opacity: 1; color: var(--teal-d); }
 .csv-import { display: flex; flex-direction: column; gap: 8px; margin: 0 0 16px; }
 .csv-import input[type=file] { padding: 6px; background: #fff; }
+.uc-browser { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: -4px 0 16px; background: #fbfdfc; }
+.uc-cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 10px; }
+.uc-cols > div { border: 1px solid var(--line); border-radius: 10px; background: #fff; min-height: 180px; max-height: 300px; overflow: auto; }
+.uc-h { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 800; padding: 8px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: #fff; }
+.uc-cols ul { list-style: none; margin: 0; padding: 4px; }
+.uc-cols li { padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.uc-cols li:hover { background: #eef5f3; } .uc-cols li.on { background: var(--teal); color: #04231f; font-weight: 700; }
+.uc-cols li.uc-err { color: var(--red); white-space: normal; cursor: default; }

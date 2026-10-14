@@ -38,6 +38,27 @@
     <code id="call_preview" style="white-space:normal;word-break:break-all"></code>
     <br><small class="muted">Banco e esquema da external table em branco usam o padrão da conexão. No perfil SP_CARGA_EVENTUAL, a sessão é aberta no banco da external table,
       porque a procedure grava com <code>INSERT INTO esquema.tabela</code>, sem o banco.</small></div>
+  <h3 style="margin-top:6px">Destino no Databricks <small class="muted">(tabela Delta no Unity Catalog)</small></h3>
+  <div class="row">
+    <label class="grow">Catálogo<input name="dest_catalog" id="dest_catalog" value="{{ t.dest_catalog or '' if t else '' }}" pattern="[A-Za-z0-9_]+" placeholder="ex.: migracao"></label>
+    <label class="grow">Schema<input name="dest_schema" id="dest_schema" value="{{ t.dest_schema or '' if t else '' }}" pattern="[A-Za-z0-9_]+" placeholder="ex.: bronze"></label>
+    <label class="grow">Tabela<input name="dest_table" id="dest_table" value="{{ t.dest_table or '' if t else '' }}" pattern="[A-Za-z0-9_]+" placeholder="ex.: fato_vendas"></label>
+    <label><span>&nbsp;</span><button type="button" class="btn ghost" id="uc-open">📚 Procurar no catálogo</button></label>
+  </div>
+  <div id="dest-status" class="hint" style="margin:-6px 0 14px"></div>
+
+  <div id="uc-browser" class="uc-browser" hidden>
+    <div class="split"><b>Unity Catalog</b>
+      <span class="actions"><input type="search" id="uc-filter" placeholder="filtrar…" style="width:16em"><button type="button" class="btn ghost small" id="uc-close">Fechar</button></span></div>
+    <div class="uc-cols">
+      <div><div class="uc-h">Catálogos</div><ul id="uc-cat"></ul></div>
+      <div><div class="uc-h">Schemas</div><ul id="uc-sch"></ul></div>
+      <div><div class="uc-h">Tabelas</div><ul id="uc-tab"></ul></div>
+    </div>
+    <p class="hint">Mostra o que o app pode ver: o service principal do app precisa de <code>BROWSE</code> (ou <code>USE CATALOG</code>/<code>USE SCHEMA</code>) no catálogo.
+      Clique numa tabela para preenchê-la; para uma tabela que ainda vai ser criada, digite o nome.</p>
+  </div>
+
   <div class="row">
     <label>Subbloco padrão<span class="nowrap"><input type="number" name="default_subblock_size" min="1" value="{{ t.default_subblock_size if t else 1 }}" style="width:5em">
       <select name="default_subblock_unit">{% for u in UNITS %}<option value="{{ u }}" {{ 'selected' if (t and t.default_subblock_unit == u) or (not t and u == 'MONTH') }}>{{ UNIT_LABEL[u] }}</option>{% endfor %}</select></span></label>
@@ -82,6 +103,58 @@
   }
   document.querySelectorAll('input, select').forEach((el) => el.addEventListener('input', render));
   render();
+
+  // ---------- navegador do Unity Catalog
+  const box = $('uc-browser'), sel = { cat: null, sch: null };
+  const api = async (path) => (await fetch(path, { headers: { 'X-Requested-With': 'fetch' } })).json();
+  const fill = (ul, res, onClick, icon) => {
+    ul.innerHTML = '';
+    if (!res.ok) { ul.innerHTML = `<li class="uc-err">${res.error || 'erro'}</li>`; return; }
+    if (!res.items.length) { ul.innerHTML = '<li class="muted">(vazio)</li>'; return; }
+    res.items.forEach((it) => {
+      const li = document.createElement('li');
+      li.textContent = `${icon} ${it.name}`; li.title = it.comment || it.type || '';
+      li.dataset.name = it.name.toLowerCase();
+      li.addEventListener('click', () => { ul.querySelectorAll('li').forEach((x) => x.classList.remove('on')); li.classList.add('on'); onClick(it); });
+      ul.appendChild(li);
+    });
+    applyFilter();
+  };
+  const applyFilter = () => {
+    const q = $('uc-filter').value.toLowerCase();
+    box.querySelectorAll('li[data-name]').forEach((li) => { li.style.display = li.dataset.name.includes(q) ? '' : 'none'; });
+  };
+  const loadTables = async (c, s) => fill($('uc-tab'), await api(`/api/uc/tables?catalog=${encodeURIComponent(c)}&schema=${encodeURIComponent(s)}`),
+    (t) => { $('dest_catalog').value = c; $('dest_schema').value = s; $('dest_table').value = t.name; checkDest(); }, '▦');
+  const loadSchemas = async (c) => { $('uc-tab').innerHTML = ''; fill($('uc-sch'), await api(`/api/uc/schemas?catalog=${encodeURIComponent(c)}`),
+    (s) => { sel.sch = s.name; loadTables(c, s.name); }, '🗂'); };
+  $('uc-open').addEventListener('click', async () => {
+    box.hidden = false;
+    fill($('uc-cat'), await api('/api/uc/catalogs'), (c) => { sel.cat = c.name; loadSchemas(c.name); }, '📁');
+    if ($('dest_catalog').value) { await loadSchemas($('dest_catalog').value); if ($('dest_schema').value) loadTables($('dest_catalog').value, $('dest_schema').value); }
+  });
+  $('uc-close').addEventListener('click', () => { box.hidden = true; });
+  $('uc-filter').addEventListener('input', applyFilter);
+
+  // ---------- confere a tabela destino (existe? a coluna de tempo está nela?)
+  let timer;
+  async function checkDest() {
+    const parts = ['dest_catalog', 'dest_schema', 'dest_table'].map((id) => $(id).value.trim());
+    const st = $('dest-status');
+    if (!parts.some(Boolean)) { st.innerHTML = 'Sem destino: o arquivo é gerado, mas não é importado.'; return; }
+    if (!parts.every(Boolean)) { st.innerHTML = '<span class="warn-text">informe catálogo, schema e tabela</span>'; return; }
+    const r = await api(`/api/uc/table?name=${encodeURIComponent(parts.join('.'))}`);
+    if (!r.exists) { st.innerHTML = `<span class="warn-text">⚠ ${parts.join('.')}: ${r.error || 'não encontrada'}. A importação exige a tabela criada (com o layout do Netezza).</span>`; return; }
+    if ((r.format || '').toUpperCase() !== 'DELTA') {
+      st.innerHTML = `<span class="bad-text">⚠ ${parts.join('.')} é ${r.type} ${r.format || '(formato desconhecido)'}: o destino precisa ser uma <b>tabela Delta</b> (a carga usa REPLACE WHERE).</span>`; return;
+    }
+    const tc = v('time_column').toLowerCase();
+    const temCol = !tc || r.columns.some((c) => c.name.toLowerCase() === tc);
+    st.innerHTML = `✅ <b>${parts.join('.')}</b> · ${r.type} ${r.format} · ${r.columns.length} colunas` +
+      (tc ? (temCol ? ` · coluna de tempo <code>${tc.toUpperCase()}</code> encontrada` : ` · <span class="bad-text">coluna de tempo <code>${tc.toUpperCase()}</code> não existe no destino</span>`) : '');
+  }
+  ['dest_catalog', 'dest_schema', 'dest_table', 'time_column'].forEach((id) => $(id).addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(checkDest, 500); }));
+  checkDest();
 })();
 </script>
 {% endblock %}

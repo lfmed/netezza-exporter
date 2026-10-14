@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.002 — 2026-10-14
+- Destino no Databricks no cadastro da tabela (catálogo, schema e tabela do Unity Catalog) com navegador do catálogo no app, conferência da tabela (existe, tipo, colunas, coluna de tempo) e colunas de destino no CSV.
+
 ## 1.001 — 2026-10-14
 - Removido tudo o que era simulação: driver fake (código, telas e banco), dados simulados (tabelas de exemplo, pedidos, subblocos, eventos, hook e job de exemplo) e o smoke test simulado; conexão 'netezza' passa a ser nzpy aguardando host e credenciais. Backup no branch Lakebase backup-antes-remover-simulacao.
 

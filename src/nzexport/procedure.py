@@ -125,6 +125,19 @@ def build_call(cfg: dict, source: dict | None, data_ini: date, data_fim: date) -
     return CallSpec(proc, args, names, timeout_s, session_database=None, profile=profile)
 
 
+_UC_NAME = re.compile(r"^[A-Za-z0-9_]{1,255}$")
+
+
+def validate_destination(cfg: dict) -> list[str]:
+    """Catálogo, schema e tabela destino no Unity Catalog: os três juntos (ou nenhum), nomes simples."""
+    parts = {k: (cfg.get(k) or "").strip() for k in ("dest_catalog", "dest_schema", "dest_table")}
+    if not any(parts.values()):
+        return []
+    errors = [f"{k}: não informado" for k, v in parts.items() if not v]
+    errors += [f"{k}: nome inválido {v!r} (use letras, números e _)" for k, v in parts.items() if v and not _UC_NAME.match(v)]
+    return errors
+
+
 def validate_table_config(cfg: dict, source: dict | None) -> list[str]:
     """Erros de cadastro (para a tela e o CSV), usando um período de exemplo."""
     try:

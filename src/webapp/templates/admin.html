@@ -34,11 +34,12 @@
     <span class="actions"><input type="file" name="csv_file" accept=".csv,text/csv" required><button class="btn">Pré-visualizar importação</button></span>
   </form>
   <table class="grid">
-    <thead><tr><th>ID</th><th>Ativa</th><th>Chamada</th><th>Subbloco padrão</th><th>Máx. paralelo</th><th>Timeout</th><th>Retries</th><th>Escopo da migração</th><th>Versão</th></tr></thead>
+    <thead><tr><th>ID</th><th>Ativa</th><th>Chamada</th><th>Destino (Databricks)</th><th>Subbloco padrão</th><th>Máx. paralelo</th><th>Timeout</th><th>Retries</th><th>Escopo da migração</th><th>Versão</th></tr></thead>
     <tbody>{% for t in tables %}
       <tr><td><a href="{{ url_for('admin_table_form', table_config_id=t.table_config_id) }}"><b>{{ t.table_config_id }}</b></a></td>
         <td>{{ 'Sim' if t.active else 'Não' }}</td>
         <td><code style="white-space:normal;word-break:break-all">{{ call_preview(t, (sources|selectattr('source_id', 'equalto', t.source_id)|list or [none])[0], DEMO_INI, DEMO_FIM) }}</code></td>
+        <td>{% if t.dest_table %}<code>{{ t.dest_catalog }}.{{ t.dest_schema }}.{{ t.dest_table }}</code>{% else %}<span class="warn-text">não definido</span>{% endif %}</td>
         <td>{{ t.default_subblock_size }} {{ UNIT_LABEL[t.default_subblock_unit] }}</td><td>{{ t.max_parallel }}</td>
         <td>{{ t.call_timeout_min }} min</td><td>{{ t.max_retries }}{% if t.retry_unknown %} (+desconhecidos){% endif %}</td>
         <td class="nowrap">{% if t.migration_start %}{{ t.migration_start|dt }} → {{ t.migration_end|dt }}{% else %}<span class="warn-text">não definido</span>{% endif %}</td>

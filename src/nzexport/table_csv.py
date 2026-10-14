@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from .procedure import DATE_FORMATS, DEFAULT_PROFILE, PROFILES, validate_table_config
+from .procedure import DATE_FORMATS, DEFAULT_PROFILE, PROFILES, validate_destination, validate_table_config
 
 # coluna, obrigatória, descrição (vai para o modelo e para a tela)
 COLUMNS = [
@@ -20,6 +20,9 @@ COLUMNS = [
     ("ext_schema", False, "p_esquema_ext_table: esquema da external table (vazio = padrão da conexão)"),
     ("time_column", False, "p_NomeColunaTempo: coluna de data usada no filtro (obrigatória no perfil SP_CARGA_EVENTUAL)"),
     ("date_format", False, "Formato de p_dtini/p_dtfim: YYYYMMDD ou YYYY-MM-DD (padrão: YYYYMMDD)"),
+    ("dest_catalog", False, "Destino no Databricks: catálogo do Unity Catalog"),
+    ("dest_schema", False, "Destino no Databricks: schema"),
+    ("dest_table", False, "Destino no Databricks: tabela Delta que recebe o .dat"),
     ("default_subblock_unit", False, "Unidade do subbloco padrão: DIA, SEMANA, MES ou ANO (padrão: MES)"),
     ("default_subblock_size", False, "Quantidade de unidades por subbloco (padrão: 1)"),
     ("max_parallel", False, "Máximo de chamadas simultâneas desta tabela (padrão: 2)"),
@@ -32,7 +35,7 @@ COLUMNS = [
 ]
 FIELDS = [c[0] for c in COLUMNS]
 VERSION_FIELDS = ("call_profile", "procedure_name", "source_database", "source_table", "ext_database", "ext_schema",
-                  "time_column", "date_format", "default_subblock_unit", "default_subblock_size", "max_parallel",
+                  "time_column", "date_format", "dest_catalog", "dest_schema", "dest_table", "default_subblock_unit", "default_subblock_size", "max_parallel",
                   "call_timeout_min", "max_retries", "retry_unknown", "migration_start", "migration_end", "description")
 
 _UNIT_ALIASES = {"DAY": "DAY", "DIA": "DAY", "DIAS": "DAY", "D": "DAY",
@@ -47,13 +50,13 @@ MAX_ROWS = 2000
 
 EXAMPLE_ROWS = [
     ["FATO_VENDAS", "netezza", "sim", "SP_CARGA_EVENTUAL", "SP_CARGA_EVENTUAL", "DWA", "FATO_VENDAS", "", "", "SK_DATA",
-     "YYYYMMDD", "MES", "1", "2", "240", "2", "não", "2015-01-01", "2025-12-31",
+     "YYYYMMDD", "migracao", "bronze", "fato_vendas", "MES", "1", "2", "240", "2", "não", "2015-01-01", "2025-12-31",
      "Banco/esquema da external table vazios: usa o padrão da conexão"],
     ["FATO_SAUDE", "netezza", "sim", "SP_CARGA_EVENTUAL", "SP_CARGA_EVENTUAL", "DWA", "FATO_SAUDE", "STAGE", "ADMIN",
-     "DT_REFERENCIA", "YYYYMMDD", "MES", "3", "1", "480", "1", "não", "01/01/2018", "31/12/2025",
+     "DT_REFERENCIA", "YYYYMMDD", "migracao", "bronze", "fato_saude", "MES", "3", "1", "480", "1", "não", "01/01/2018", "31/12/2025",
      "Subbloco trimestral; external table em STAGE.ADMIN"],
     ["FATO_DOC", "netezza", "sim", "SP_CARGA_EVENTUAL", "SP_CARGA_EVENTUAL", "DWA", "FATO_DOC", "", "", "SK_DATA_DOC",
-     "YYYYMMDD", "DIA", "7", "4", "120", "2", "não", "2024-01-01", "2025-12-31", "Subbloco semanal (7 dias)"],
+     "YYYYMMDD", "migracao", "bronze", "fato_doc", "DIA", "7", "4", "120", "2", "não", "2024-01-01", "2025-12-31", "Subbloco semanal (7 dias)"],
 ]
 
 
@@ -75,6 +78,7 @@ def export_csv(tables: list[dict]) -> str:
             t["table_config_id"], t["source_id"], "sim" if t["active"] else "não", t.get("call_profile") or "",
             t["procedure_name"], t.get("source_database") or "", t["source_table"], t.get("ext_database") or "",
             t.get("ext_schema") or "", t.get("time_column") or "", t.get("date_format") or "YYYYMMDD",
+            t.get("dest_catalog") or "", t.get("dest_schema") or "", t.get("dest_table") or "",
             _UNIT_PT[t["default_subblock_unit"]], t["default_subblock_size"], t["max_parallel"],
             t["call_timeout_min"], t["max_retries"], "sim" if t["retry_unknown"] else "não",
             t["migration_start"].isoformat() if t["migration_start"] else "",
@@ -201,6 +205,9 @@ def parse(text: str, sources) -> list[ParsedRow]:
             r.errors.append("source_table: obrigatório")
         elif v["call_profile"] in PROFILES and fmt in DATE_FORMATS:
             r.errors += [f"chamada: {e}" for e in validate_table_config(v, source_rows.get(src) or {})]
+        for k in ("dest_catalog", "dest_schema", "dest_table"):
+            v[k] = raw.get(k) or None
+        r.errors += [f"destino: {e}" for e in validate_destination(v)]
         unit = (raw.get("default_subblock_unit") or "MES").upper()
         if unit not in _UNIT_ALIASES:
             r.errors.append(f"default_subblock_unit: use DIA, SEMANA, MES ou ANO (recebido {unit!r})")
