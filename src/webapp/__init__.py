@@ -423,8 +423,12 @@ def create_app() -> Flask:
         db = services.db()
         last_tests = {r["source_id"]: r for r in db.query(
             "SELECT DISTINCT ON (source_id) * FROM connection_test ORDER BY source_id, requested_at DESC")}
+        try:
+            deploy = db.one("SELECT * FROM deploy_check ORDER BY checked_at DESC LIMIT 1")
+        except Exception:  # noqa: BLE001 - tabela criada pelo pós-deploy
+            deploy = None
         return render_template("admin.html", sources=repo.list_sources(db), tables=repo.list_tables(db),
-                               hooks=repo.list_hooks(db), last_tests=last_tests)
+                               hooks=repo.list_hooks(db), last_tests=last_tests, deploy=deploy)
 
     # ------------------------------------------------------------ conexão Netezza
     SECURITY_LEVELS = {0: "0 — preferir sem TLS", 1: "1 — preferir TLS (padrão)", 2: "2 — somente sem TLS",

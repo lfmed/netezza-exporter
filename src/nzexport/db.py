@@ -45,8 +45,8 @@ class LakebaseConfig:
 
     def _default_user(self) -> str:
         me = self.w.current_user.me()
-        # Service principals se autenticam com o application id
-        return me.user_name if me.user_name and "@" in me.user_name else (me.application_id or me.user_name)
+        # usuário: e-mail; service principal: o user_name já é o application id (role no Postgres)
+        return getattr(me, "application_id", None) or me.user_name
 
     def conninfo(self) -> dict:
         info = dict(host=self.host, port=self.port, dbname=self.database, user=self.user,

@@ -85,12 +85,19 @@ carrega o arquivo na tabela destino e apaga o `.dat`, e o subbloco fica `DONE`. 
 
 ## Operação
 
+Deploy em qualquer ambiente (dev, hml, prd): veja **[DEPLOY.md](DEPLOY.md)**. Em resumo:
+
 ```bash
-P=fe-vm-stable-classic-pg4xe1
-databricks bundle deploy --profile $P            # app + jobs
-databricks bundle run nzexport_app --profile $P  # publica o código do app
-.venv/bin/python scripts/migrate_local.py --grant-role <sp_client_id>   # schema + grants (o job também aplica a cada run)
-.venv/bin/python -m pytest -q tests              # testes do planner
+databricks bundle deploy -t <alvo>
+databricks bundle run nzexport_pos_deploy -t <alvo>   # banco, grants, ACLs e conferência dos pré-requisitos
+databricks bundle run nzexport_app -t <alvo>
+```
+
+Desenvolvimento:
+
+```bash
+.venv/bin/python -m pytest -q tests                  # testes unitários
+.venv/bin/python scripts/teste_importacao.py         # E2E do importador (ambiente temporário, removido no fim)
 ```
 
 ## Configurar o Netezza

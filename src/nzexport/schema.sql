@@ -286,6 +286,15 @@ CREATE TABLE IF NOT EXISTS connection_test (
 );
 CREATE INDEX IF NOT EXISTS connection_test_src_idx ON connection_test (source_id, requested_at DESC);
 
+-- Relatório de cada pós-deploy (nzexport_pos_deploy)
+CREATE TABLE IF NOT EXISTS deploy_check (
+  check_id         bigserial PRIMARY KEY,
+  run_id           bigint,
+  checked_at       timestamptz NOT NULL DEFAULT now(),
+  ok int, warnings int, errors int,
+  items            jsonb
+);
+
 -- Execuções do dispatcher (para o app saber se precisa disparar o Job)
 CREATE TABLE IF NOT EXISTS dispatcher_run (  -- execuções do dispatcher e do importador (coluna kind)
   run_id           bigint PRIMARY KEY,

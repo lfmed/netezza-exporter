@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.005 — 2026-10-14
+- Deploy repetível no ambiente do cliente: targets dev/hml/prd com variáveis (app, projeto Lakebase, secret scope, catálogos de destino, svc_hash, grupo dono); projeto Lakebase e secret scope como recursos do bundle (prevent_destroy); config do app no bundle (sem valores fixos); job nzexport_pos_deploy idempotente (migração, grants do app no banco, ACLs do scope, BROWSE nos catálogos e conferência dos pré-requisitos com relatório na Administração); DEPLOY.md.
+
 ## 1.004 — 2026-10-14
 - Job importador nzexport-importer: carrega o .dat de cada subbloco exportado na tabela destino por append (leitura/limpeza do motor PLHDWA), apaga o arquivo; em erro limpa o período no destino, move o .dat para erro/ e libera o subbloco; retomada pelo histórico Delta; 1 importação por tabela destino; dispatcher e app disparam o importador; telas com as importações e linhas carregadas.
 

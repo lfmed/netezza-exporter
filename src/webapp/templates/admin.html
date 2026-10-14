@@ -3,6 +3,20 @@
 <section class="head">
   <div><h1>⚙️ Administração</h1><p>Origens Netezza, tabelas exportáveis e hooks pós-exportação</p></div></section>
 
+{% if deploy %}
+<details class="card {{ 'conflict' if deploy.errors }}" {{ 'open' if deploy.errors or deploy.warnings }}>
+  <summary><b>🧰 Último pós-deploy</b> · {{ deploy.checked_at|dt }} ·
+    <span class="badge s-done">{{ deploy.ok }} OK</span>
+    {% if deploy.warnings %}<span class="badge s-unknown">{{ deploy.warnings }} aviso(s)</span>{% endif %}
+    {% if deploy.errors %}<span class="badge s-failed">{{ deploy.errors }} erro(s)</span>{% endif %}</summary>
+  <table class="grid compact" style="margin-top:10px"><thead><tr><th>Nível</th><th>Etapa</th><th>Detalhe</th><th>Quem resolve</th></tr></thead><tbody>
+  {% for i in deploy['items'] %}<tr><td>{% if i.nivel == 'OK' %}<span class="badge s-done">OK</span>{% elif i.nivel == 'AVISO' %}<span class="badge s-unknown">aviso</span>{% else %}<span class="badge s-failed">erro</span>{% endif %}</td>
+    <td><b>{{ i.etapa }}</b></td><td><small>{{ i.detalhe }}</small></td><td><small>{{ i.quem or '' }}</small></td></tr>{% endfor %}
+  </tbody></table>
+  <p class="hint">Gerado pelo job <code>nzexport-pos-deploy</code> (rode depois de todo deploy). Avisos são pré-requisitos externos ao app.</p>
+</details>
+{% endif %}
+
 <div class="card">
   <div class="split"><h2>🔌 Conexões Netezza</h2><a class="btn" href="{{ url_for('admin_source_form') }}">+ Nova conexão</a></div>
   <table class="grid">

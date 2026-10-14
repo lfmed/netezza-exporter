@@ -1,14 +1,31 @@
 bundle:
   name: netezza-exporter
 
+# -----------------------------------------------------------------------------------------------------------
+# Variáveis: tudo o que muda por ambiente. Preencha nos targets (ou via BUNDLE_VAR_<nome> no CI/CD).
+# -----------------------------------------------------------------------------------------------------------
 variables:
+  app_name:
+    description: Nome do Databricks App (único no workspace)
+    default: netezza-exporter
   lakebase_project:
+    description: ID do projeto Lakebase (Postgres) que guarda pedidos, subblocos e configuração do app
     default: netezza-exporter
   lakebase_endpoint:
+    description: Endpoint read-write do branch production do projeto Lakebase
     default: projects/netezza-exporter/branches/production/endpoints/primary
-  app_sp_client_id:
-    description: client id do service principal do app (recebe GRANT no schema nzexport)
-    default: "88d6e7b2-9da3-4ca1-890e-fab9e0eb9604"
+  secret_scope:
+    description: Secret scope com usuário/senha do Netezza (o app grava; os jobs leem). Nunca coloque o valor aqui.
+    default: nzexport-netezza
+  dest_catalogs:
+    description: Catálogos de destino (vírgula) em que o app recebe BROWSE para o navegador do catálogo
+    default: ""
+  svc_hash:
+    description: Application ID do service principal que roda os jobs (run_as) e lê o secret scope. Obrigatório em hml/prd.
+    default: ""
+  grupo_owner:
+    description: Grupo do time dono (MANAGE no secret scope). Vazio = só quem fez o deploy.
+    default: ""
 
 sync:
   exclude:
@@ -17,20 +34,42 @@ sync:
     - tests
     - "*.md"
     - .claude-sessions.log
+    - scripts/ref_*
+    - scripts/screenshots
 
 resources:
+  # ---------------------------------------------------------------------------------------------------------
+  # Estado do app (Lakebase). prevent_destroy: um `bundle destroy` não apaga os dados da migração.
+  # ---------------------------------------------------------------------------------------------------------
+  postgres_projects:
+    nzexport_lakebase:
+      project_id: ${var.lakebase_project}
+      display_name: Netezza Exporter
+      pg_version: 17
+      lifecycle:
+        prevent_destroy: true
+
+  # ---------------------------------------------------------------------------------------------------------
+  # Credenciais do Netezza: o scope e as permissões são código; o VALOR entra pelo app (Conexão Netezza) ou pelo
+  # CI/CD (databricks secrets put-secret ...), nunca pelo Git. O WRITE do service principal do app é aplicado pelo
+  # job de pós-deploy (o id do SP só existe depois que o app é criado).
+  # ---------------------------------------------------------------------------------------------------------
+  secret_scopes:
+    netezza:
+      name: ${var.secret_scope}
+      lifecycle:
+        prevent_destroy: true
+
   jobs:
     nzexport_dispatcher:
       name: nzexport-dispatcher
-      description: Drena a fila de subblocos e chama a procedure Netezza (tabela, data_ini, data_fim).
+      description: Drena a fila de subblocos e chama a SP_CARGA_EVENTUAL no Netezza.
       max_concurrent_runs: 1
       queue:
         enabled: true
       parameters:
         - name: lakebase_endpoint
           default: ${var.lakebase_endpoint}
-        - name: grant_role
-          default: ${var.app_sp_client_id}
         - name: idle_exit_s
           default: "120"
         - name: max_runtime_min
@@ -51,8 +90,6 @@ resources:
               - "{{job.parameters.idle_exit_s}}"
               - --max-runtime-min
               - "{{job.parameters.max_runtime_min}}"
-              - --grant-role
-              - "{{job.parameters.grant_role}}"
               - --importer-job-id
               - "${resources.jobs.nzexport_importer.id}"
           timeout_seconds: 0
@@ -60,7 +97,7 @@ resources:
         - environment_key: default
           spec:
             environment_version: "3"
-            dependencies:
+            dependencies: &deps
               - nzpy>=1.15
               - psycopg[binary]>=3.2
               - psycopg-pool>=3.2
@@ -94,10 +131,7 @@ resources:
         - environment_key: default
           spec:
             environment_version: "3"
-            dependencies:
-              - psycopg[binary]>=3.2
-              - psycopg-pool>=3.2
-              - databricks-sdk>=0.81
+            dependencies: *deps
 
     nzexport_conn_test:
       name: nzexport-conn-test
@@ -122,22 +156,60 @@ resources:
         - environment_key: default
           spec:
             environment_version: "3"
-            dependencies:
-              - nzpy>=1.15
-              - psycopg[binary]>=3.2
-              - psycopg-pool>=3.2
-              - databricks-sdk>=0.81
+            dependencies: *deps
+
+    # Pós-deploy idempotente: rode depois de TODO deploy (bundle run nzexport_pos_deploy).
+    nzexport_pos_deploy:
+      name: nzexport-pos-deploy
+      description: Migra o banco do app, aplica grants/ACLs ao service principal do app e confere os pré-requisitos.
+      max_concurrent_runs: 1
+      parameters:
+        - name: lakebase_endpoint
+          default: ${var.lakebase_endpoint}
+        - name: app_name
+          default: ${var.app_name}
+        - name: secret_scope
+          default: ${var.secret_scope}
+        - name: dest_catalogs
+          default: ${var.dest_catalogs}
+      tasks:
+        - task_key: pos_deploy
+          environment_key: default
+          spark_python_task:
+            python_file: ./src/pos_deploy.py
+            parameters: ["--endpoint", "{{job.parameters.lakebase_endpoint}}", "--app-name", "{{job.parameters.app_name}}",
+                         "--secret-scope", "{{job.parameters.secret_scope}}", "--dest-catalogs", "{{job.parameters.dest_catalogs}}",
+                         "--run-id", "{{job.run_id}}"]
+          timeout_seconds: 1800
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "3"
+            dependencies: *deps
 
   apps:
     nzexport_app:
-      name: netezza-exporter
-      description: Exportador Netezza — pedidos, subblocos, acompanhamento e periodicidade
+      name: ${var.app_name}
+      description: Migração Netezza → Databricks — pedidos por subbloco, importação para Delta e completude
       source_code_path: ./src
+      config:
+        command: ["gunicorn", "app:app", "-w", "2", "--threads", "8", "-b", "0.0.0.0:8000", "--timeout", "120"]
+        env:
+          - name: LAKEBASE_ENDPOINT
+            value: ${var.lakebase_endpoint}
+          - name: NETEZZA_SECRET_SCOPE
+            value: ${var.secret_scope}
+          - name: DISPATCHER_JOB_ID
+            value_from: dispatcher-job
+          - name: CONN_TEST_JOB_ID
+            value_from: conn-test-job
+          - name: IMPORTER_JOB_ID
+            value_from: importer-job
       resources:
         - name: postgres
           postgres:
-            branch: projects/${var.lakebase_project}/branches/production
-            database: projects/${var.lakebase_project}/branches/production/databases/databricks-postgres
+            branch: ${resources.postgres_projects.nzexport_lakebase.name}/branches/production
+            database: ${resources.postgres_projects.nzexport_lakebase.name}/branches/production/databases/databricks-postgres
             permission: CAN_CONNECT_AND_CREATE
         - name: dispatcher-job
           job:
@@ -152,8 +224,58 @@ resources:
             id: ${resources.jobs.nzexport_importer.id}
             permission: CAN_MANAGE_RUN
 
+# -----------------------------------------------------------------------------------------------------------
+# Ambientes. dev = workspace de desenvolvimento (jobs rodam como quem faz o deploy).
+# hml/prd = ambiente do cliente: preencha o host e as variáveis <...>; jobs rodam como o service principal
+# (svc_hash) e o bundle fica na pasta dele, como no PLHDWA.
+# -----------------------------------------------------------------------------------------------------------
 targets:
   dev:
     default: true
     workspace:
       host: https://fevm-stable-classic-pg4xe1.cloud.databricks.com
+    variables:
+      dest_catalogs: stable_classic_pg4xe1_catalog
+
+  hml:
+    workspace:
+      host: https://<workspace-hml>.cloud.databricks.com
+      root_path: /Workspace/Users/${var.svc_hash}/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: ${var.svc_hash}
+    variables:
+      app_name: netezza-exporter-hml
+      lakebase_project: netezza-exporter-hml
+      lakebase_endpoint: projects/netezza-exporter-hml/branches/production/endpoints/primary
+      secret_scope: nzexport-netezza-hml
+      dest_catalogs: <catalogo_destino_hml>
+      svc_hash: <application_id_do_sp_hml>
+      grupo_owner: <grupo_do_time>
+    resources:
+      secret_scopes:
+        netezza:
+          permissions:
+            - group_name: ${var.grupo_owner}
+              level: MANAGE
+      # o READ do svc_hash e o WRITE do app no scope são aplicados pelo nzexport_pos_deploy (só adiciona ACL)
+
+  prd:
+    workspace:
+      host: https://<workspace-prd>.cloud.databricks.com
+      root_path: /Workspace/Users/${var.svc_hash}/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: ${var.svc_hash}
+    variables:
+      app_name: netezza-exporter
+      lakebase_project: netezza-exporter-prd
+      lakebase_endpoint: projects/netezza-exporter-prd/branches/production/endpoints/primary
+      secret_scope: nzexport-netezza
+      dest_catalogs: <catalogo_destino_prd>
+      svc_hash: <application_id_do_sp_prd>
+      grupo_owner: <grupo_do_time>
+    resources:
+      secret_scopes:
+        netezza:
+          permissions:
+            - group_name: ${var.grupo_owner}
+              level: MANAGE
