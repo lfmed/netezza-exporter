@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.006 — 2026-10-14
+- Vazão por subbloco: registros/s na chamada da SP (Netezza) e na carga do Delta (com MB/s), média ponderada por tabela no pedido e vazão histórica da tabela na página de completude.
+
 ## 1.005 — 2026-10-14
 - Deploy repetível no ambiente do cliente: targets dev/hml/prd com variáveis (app, projeto Lakebase, secret scope, catálogos de destino, svc_hash, grupo dono); projeto Lakebase e secret scope como recursos do bundle (prevent_destroy); config do app no bundle (sem valores fixos); job nzexport_pos_deploy idempotente (migração, grants do app no banco, ACLs do scope, BROWSE nos catálogos e conferência dos pré-requisitos com relatório na Administração); DEPLOY.md.
 

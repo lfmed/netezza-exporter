@@ -13,7 +13,8 @@
     <span class="muted"><b>{{ totals.canceled - totals.import_failed }}</b> cancelados/substituídos</span>
   </div>
   <table class="grid">
-    <thead><tr><th>#</th><th>Tabela</th><th>Período</th><th>Subbloco</th><th>Progresso</th><th>Exec.</th><th>Pend.</th><th>Falhos</th><th>Desc.</th></tr></thead>
+    <thead><tr><th>#</th><th>Tabela</th><th>Período</th><th>Subbloco</th><th>Progresso</th><th>Exec.</th><th>Pend.</th><th>Falhos</th><th>Desc.</th>
+      <th title="média ponderada: soma das linhas / soma dos segundos dos subblocos medidos">Netezza reg/s</th><th>Delta reg/s</th><th>Linhas</th></tr></thead>
     <tbody>{% for t in tables %}
       <tr><td>{{ t.ordinal }}</td><td><b>{{ t.table_config_id }}</b> <small class="muted">v{{ t.config_version }}</small>{% if t.is_reprocess %} <span class="badge s-stopping">reproc.</span>{% endif %}</td>
         <td class="nowrap">{{ t.period_start|dt }} → {{ t.period_end|dt }}
@@ -23,7 +24,11 @@
           </details>{% endif %}</td>
         <td>{{ t.subblock_size }} {{ UNIT_LABEL[t.subblock_unit] }}</td>
         <td style="min-width:200px">{{ progress(t.done, t.total - t.canceled + t.import_failed, t.failed + t.unknown + t.import_failed, t.running + t.exported + t.importing) }}</td>
-        <td>{{ t.running }}</td><td>{{ t.pending }}</td><td>{{ t.failed }}</td><td>{{ t.unknown }}</td></tr>
+        <td>{{ t.running }}</td><td>{{ t.pending }}</td><td>{{ t.failed }}</td><td>{{ t.unknown }}</td>
+        {% set tt = throughput.get(t.request_table_id) %}
+        <td class="nowrap"><b>{{ tt.export_rows_s|num if tt else '—' }}</b>{% if tt and tt.export_rows_s_min is not none and tt.measured > 1 %}<br><small class="muted">{{ tt.export_rows_s_min|num }}–{{ tt.export_rows_s_max|num }}</small>{% endif %}</td>
+        <td class="nowrap"><b>{{ tt.import_rows_s|num if tt else '—' }}</b>{% if tt and tt.import_mb_s is not none %}<br><small class="muted">{{ tt.import_mb_s|num(2) }} MB/s</small>{% endif %}</td>
+        <td class="nowrap">{{ tt.rows|num if tt else '—' }}{% if tt and tt.measured %}<br><small class="muted">{{ tt.measured }} subbloco(s) medido(s)</small>{% endif %}</td></tr>
     {% endfor %}</tbody>
   </table>
 </div>
@@ -40,12 +45,14 @@
     </form>
   </div>
   <table class="grid compact">
-    <thead><tr><th>Tabela</th><th>#</th><th>data_ini</th><th>data_fim</th><th>Status</th><th>Tent.</th><th>Linhas</th><th>Início</th><th>Duração</th><th>Próx. tentativa</th><th>Erro</th><th></th></tr></thead>
+    <thead><tr><th>Tabela</th><th>#</th><th>data_ini</th><th>data_fim</th><th>Status</th><th>Tent.</th><th>Linhas</th><th title="linhas / duração da chamada da SP">Netezza reg/s</th><th title="linhas / duração da importação">Delta reg/s</th><th>Início</th><th>Duração</th><th>Próx. tentativa</th><th>Erro</th><th></th></tr></thead>
     <tbody>{% for s in subblocks %}
       <tr class="{{ 'hl' if s.status == 'RUNNING' }}">
         <td>{{ s.table_config_id }}</td><td>{{ s.seq }}</td><td class="nowrap">{{ s.data_ini }}</td><td class="nowrap">{{ s.data_fim }}</td>
         <td>{{ badge(s.status) }}</td><td>{{ s.attempts }}{% if s.import_attempts %}<small class="muted"> · imp. {{ s.import_attempts }}</small>{% endif %}</td>
-        <td><small>{{ '{:,}'.format(s.rows_loaded).replace(',', '.') if s.rows_loaded is not none else '—' }}</small></td>
+        <td><small>{{ s.rows_loaded|num }}</small></td>
+        <td class="nowrap" title="SP: {{ s.export_s|secs }}"><small>{{ s.export_rows_s|num }}</small></td>
+        <td class="nowrap" title="importação: {{ s.import_s|secs }}{% if s.import_mb_s is not none %} · {{ s.import_mb_s|num(2) }} MB/s{% endif %}"><small>{{ s.import_rows_s|num }}</small></td>
         <td class="nowrap"><small>{{ s.started_at|dt }}</small></td>
         <td><small>{{ s.started_at|dur(s.finished_at) if s.started_at else '—' }}</small></td>
         <td><small>{{ s.next_attempt_at|dt }}</small></td>
@@ -60,6 +67,6 @@
             <input type="hidden" name="reason"><button class="btn danger small">cancelar</button></form>
           {% endif %}</td>
       </tr>
-    {% else %}<tr><td colspan="12" class="empty">Nenhum subbloco.</td></tr>{% endfor %}</tbody>
+    {% else %}<tr><td colspan="14" class="empty">Nenhum subbloco.</td></tr>{% endfor %}</tbody>
   </table>
 </div>

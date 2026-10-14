@@ -21,6 +21,20 @@
   </dl>
   {% if t.scope_days %}{{ progress(t.done_days, t.scope_days, t.failed_days + t.unknown_days, t.inflight_days, 'dias') }}{% endif %}
 </div>
+<div class="card">
+  <h2>⏱️ Vazão histórica da tabela</h2>
+  {% if tp and tp.measured %}
+  <div class="kpis">
+    <div class="ok"><span class="big">{{ tp.export_rows_s|num }}</span><small>reg/s no Netezza (chamada da SP)</small></div>
+    <div><span class="big">{{ tp.import_rows_s|num }}</span><small>reg/s na carga do Delta{% if tp.import_mb_s is not none %} · {{ tp.import_mb_s|num(2) }} MB/s{% endif %}</small></div>
+    <div><span class="big">{{ tp.rows|num }}</span><small>linhas carregadas</small></div>
+    <div><span class="big">{{ tp.measured }}</span><small>subbloco(s) medido(s)</small></div>
+  </div>
+  <p class="hint">Média ponderada (soma das linhas ÷ soma dos segundos). Faixa por subbloco no Netezza: {{ tp.export_rows_s_min|num }}–{{ tp.export_rows_s_max|num }} reg/s.
+    Útil para dimensionar o tamanho do subbloco: ex., 3 milhões de linhas por mês a {{ tp.export_rows_s|num }} reg/s
+    {% if tp.export_rows_s %}≈ {{ (3000000 / tp.export_rows_s)|secs }} de chamada da SP{% endif %}.</p>
+  {% else %}<p class="muted">Ainda sem subblocos carregados para medir (a contagem de linhas vem da importação no Delta).</p>{% endif %}
+</div>
 <div class="cols3">
   {% for kind, title, cls in [('missing', 'Lacunas (sem pedido ou cancelados)', 'warn-text'), ('failed', 'Com falha (repetir ou cancelar no pedido)', 'bad-text'), ('unknown', 'Estado desconhecido', 'warn-text')] %}
   <div class="card"><h3>{{ title }}</h3>

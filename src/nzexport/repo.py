@@ -382,9 +382,11 @@ def request_subblocks(db: Database, request_id: str, status: str | None = None, 
     params = (request_id, status, limit) if status else (request_id, limit)
     return db.query(f"""
         SELECT s.*, lower(s.data_range) AS data_ini, upper(s.data_range) - 1 AS data_fim, rt.ordinal,
-               a.databricks_run_id, a.error_class
+               a.databricks_run_id, a.error_class,
+               tp.export_s, tp.import_s, tp.export_rows_s, tp.import_rows_s, tp.import_mb_s, tp.bytes
         FROM export_subblock s
         JOIN export_request_table rt USING (request_table_id)
+        LEFT JOIN v_subblock_throughput tp USING (subblock_id)
         LEFT JOIN LATERAL (SELECT databricks_run_id, error_class FROM export_attempt
                            WHERE subblock_id = s.subblock_id ORDER BY attempt_no DESC LIMIT 1) a ON true
         WHERE s.request_id = %s {extra}
@@ -392,6 +394,32 @@ def request_subblocks(db: Database, request_id: str, status: str | None = None, 
                  WHEN 'UNKNOWN' THEN 1 WHEN 'FAILED' THEN 2 WHEN 'IMPORT_FAILED' THEN 2
                  WHEN 'PENDING' THEN 3 ELSE 4 END, rt.ordinal, lower(s.data_range) DESC
         LIMIT %s""", params)
+
+
+_THROUGHPUT_AGG = """
+    count(*) FILTER (WHERE rows IS NOT NULL) AS measured, sum(rows) AS rows, sum(bytes) AS bytes,
+    sum(export_s) FILTER (WHERE rows IS NOT NULL) AS export_s, sum(import_s) FILTER (WHERE rows IS NOT NULL) AS import_s,
+    round(sum(rows) FILTER (WHERE export_s > 0) / nullif(sum(export_s) FILTER (WHERE rows IS NOT NULL), 0)) AS export_rows_s,
+    round(sum(rows) FILTER (WHERE import_s > 0) / nullif(sum(import_s) FILTER (WHERE rows IS NOT NULL), 0)) AS import_rows_s,
+    round((sum(bytes) / 1048576.0 / nullif(sum(import_s) FILTER (WHERE bytes IS NOT NULL), 0))::numeric, 2) AS import_mb_s,
+    min(export_rows_s) AS export_rows_s_min, max(export_rows_s) AS export_rows_s_max"""
+
+
+def request_throughput(db: Database, request_id: str) -> dict:
+    """Vazão por tabela do pedido (média ponderada: soma das linhas / soma dos segundos)."""
+    return {r["request_table_id"]: r for r in db.query(
+        f"SELECT request_table_id, {_THROUGHPUT_AGG} FROM v_subblock_throughput WHERE request_id = %s "
+        "GROUP BY request_table_id", (request_id,))}
+
+
+def table_throughput(db: Database, table_config_id: str):
+    """Média histórica da tabela (todos os subblocos carregados), para planejar o tamanho dos lotes."""
+    return db.one(f"SELECT {_THROUGHPUT_AGG} FROM v_subblock_throughput t JOIN export_subblock s USING (subblock_id) "
+                  "WHERE t.table_config_id = %s AND s.status = 'DONE'", (table_config_id,))
+
+
+def subblock_throughput(db: Database, subblock_id: str):
+    return db.one("SELECT * FROM v_subblock_throughput WHERE subblock_id = %s", (subblock_id,))
 
 
 def subblock_attempts(db: Database, subblock_id: str):

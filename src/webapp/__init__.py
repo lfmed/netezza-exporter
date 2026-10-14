@@ -122,6 +122,21 @@ def create_app() -> Flask:
             return v.astimezone(APP_TZ).strftime("%d/%m/%Y %H:%M:%S")
         return v.strftime("%d/%m/%Y") if isinstance(v, date) else str(v)
 
+    @app.template_filter("num")
+    def _num(v, casas=0):
+        """1234567.8 -> 1.234.568 (padrão brasileiro); None -> —."""
+        if v is None:
+            return "—"
+        txt = f"{float(v):,.{casas}f}"
+        return txt.replace(",", "X").replace(".", ",").replace("X", ".")
+
+    @app.template_filter("secs")
+    def _secs(v):
+        if v is None:
+            return "—"
+        v = float(v)
+        return f"{v:.1f} s" if v < 60 else f"{int(v // 60)}m{int(v % 60):02d}s"
+
     @app.template_filter("pct")
     def _pct(done, total):
         return 0 if not total else int(round(100 * (done or 0) / total))
@@ -226,7 +241,8 @@ def create_app() -> Flask:
                                   rt.period_end, rt.is_reprocess
                            FROM export_request_table rt JOIN export_request r USING (request_id)
                            WHERE rt.table_config_id = %s ORDER BY r.submitted_at DESC""", (table_config_id,))
-        return render_template("coverage.html", t=cov, ranges=repo.table_ranges(db, table_config_id), reqs=reqs)
+        return render_template("coverage.html", t=cov, ranges=repo.table_ranges(db, table_config_id), reqs=reqs,
+                               tp=repo.table_throughput(db, table_config_id))
 
     @app.post("/requests/review")
     def request_review():
@@ -298,6 +314,7 @@ def create_app() -> Flask:
                                                              "unknown", "canceled", "exported", "importing",
                                                              "import_failed")}
         return {"tables": tables, "totals": totals, "sb_status": status,
+                "throughput": repo.request_throughput(db, request_id),
                 "subblocks": repo.request_subblocks(db, request_id, status=status, limit=1000),
                 "dispatcher": repo.live_dispatcher(db)}
 
@@ -398,6 +415,7 @@ def create_app() -> Flask:
         if not sb:
             abort(404)
         return render_template("subblock.html", sb=sb, attempts=repo.subblock_attempts(db, subblock_id),
+                               tp=repo.subblock_throughput(db, subblock_id),
                                imports=repo.subblock_import_attempts(db, subblock_id))
 
     @app.post("/subblocks/<subblock_id>/retry")

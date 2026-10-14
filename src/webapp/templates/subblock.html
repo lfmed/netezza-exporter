@@ -13,6 +13,12 @@
   <dt>Lease</dt><dd>{{ sb.lease_owner or '—' }} {% if sb.lease_expires_at %}até {{ sb.lease_expires_at|dt }}{% endif %}</dd>
   {% if sb.file_name %}<dt>Arquivo</dt><dd><code>{{ sb.file_name }}</code></dd>{% endif %}
   {% if sb.rows_loaded is not none %}<dt>Carregado</dt><dd>{{ '{:,}'.format(sb.rows_loaded).replace(',', '.') }} linha(s) · versão Delta {{ sb.delta_version }} · {{ sb.loaded_at|dt }}</dd>{% endif %}
+  {% if tp and tp.rows is not none %}
+  <dt>Vazão no Netezza</dt><dd><b>{{ tp.export_rows_s|num }} reg/s</b> <small class="muted">({{ tp.rows|num }} linhas em {{ tp.export_s|secs }} de chamada da SP)</small></dd>
+  <dt>Vazão no Delta</dt><dd><b>{{ tp.import_rows_s|num }} reg/s</b>{% if tp.import_mb_s is not none %} · {{ tp.import_mb_s|num(2) }} MB/s{% endif %} <small class="muted">(importação em {{ tp.import_s|secs }})</small></dd>
+  {% elif tp and tp.export_s is not none %}
+  <dt>Chamada da SP</dt><dd>{{ tp.export_s|secs }} <small class="muted">(registros/s após a importação: a SP não devolve a contagem)</small></dd>
+  {% endif %}
   <dt>Último erro</dt><dd><small class="bad-text">{{ sb.last_error or '—' }}</small></dd>
 </dl></div>
 <div class="card">

@@ -307,6 +307,27 @@ CREATE TABLE IF NOT EXISTS dispatcher_run (  -- execuções do dispatcher e do i
 
 ALTER TABLE dispatcher_run ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'dispatcher';
 
+-- Vazão por subbloco: registros/s na geração do .dat (chamada da SP) e na carga no Delta.
+-- A SP não devolve contagem: as linhas vêm da importação (histórico Delta), então só há taxa após a carga.
+DROP VIEW IF EXISTS v_subblock_throughput;
+CREATE VIEW v_subblock_throughput AS
+SELECT s.subblock_id, s.request_id, s.request_table_id, s.table_config_id,
+       ea.started_at AS export_started_at, ea.finished_at AS export_finished_at,
+       extract(epoch FROM ea.finished_at - ea.started_at)::numeric(14,3) AS export_s,
+       ia.started_at AS import_started_at, ia.finished_at AS import_finished_at,
+       extract(epoch FROM ia.finished_at - ia.started_at)::numeric(14,3) AS import_s,
+       coalesce(s.rows_loaded, ia.rows_inserted) AS rows, ia.file_size AS bytes,
+       round(coalesce(s.rows_loaded, ia.rows_inserted) / nullif(extract(epoch FROM ea.finished_at - ea.started_at), 0)) AS export_rows_s,
+       round(coalesce(s.rows_loaded, ia.rows_inserted) / nullif(extract(epoch FROM ia.finished_at - ia.started_at), 0)) AS import_rows_s,
+       round((ia.file_size / 1048576.0 / nullif(extract(epoch FROM ia.finished_at - ia.started_at), 0))::numeric, 2) AS import_mb_s
+FROM export_subblock s
+LEFT JOIN LATERAL (SELECT started_at, finished_at FROM export_attempt
+                   WHERE subblock_id = s.subblock_id AND status = 'SUCCEEDED'
+                   ORDER BY attempt_no DESC LIMIT 1) ea ON true
+LEFT JOIN LATERAL (SELECT started_at, finished_at, rows_inserted, file_size FROM export_import_attempt
+                   WHERE subblock_id = s.subblock_id AND status = 'SUCCEEDED'
+                   ORDER BY attempt_no DESC LIMIT 1) ia ON true;
+
 -- Progresso por tabela do pedido
 DROP VIEW IF EXISTS v_request_table_progress;
 CREATE VIEW v_request_table_progress AS
