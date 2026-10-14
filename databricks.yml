@@ -64,6 +64,35 @@ resources:
               - psycopg-pool>=3.2
               - databricks-sdk>=0.81
 
+    nzexport_conn_test:
+      name: nzexport-conn-test
+      description: Testa a conexão Netezza configurada no app (mesmo caminho de rede do dispatcher).
+      max_concurrent_runs: 5
+      parameters:
+        - name: lakebase_endpoint
+          default: ${var.lakebase_endpoint}
+        - name: source_id
+          default: ""
+        - name: test_id
+          default: ""
+      tasks:
+        - task_key: test
+          environment_key: default
+          spark_python_task:
+            python_file: ./src/run_conn_test.py
+            parameters: ["--endpoint", "{{job.parameters.lakebase_endpoint}}", "--source-id", "{{job.parameters.source_id}}",
+                         "--test-id", "{{job.parameters.test_id}}", "--run-id", "{{job.run_id}}"]
+          timeout_seconds: 600
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "3"
+            dependencies:
+              - nzpy>=1.15
+              - psycopg[binary]>=3.2
+              - psycopg-pool>=3.2
+              - databricks-sdk>=0.81
+
     nzexport_hook_example:
       name: nzexport-hook-example
       description: Exemplo de job acionado pelo hook pós-exportação (substituir pela importação para Delta).
@@ -101,6 +130,10 @@ resources:
         - name: dispatcher-job
           job:
             id: ${resources.jobs.nzexport_dispatcher.id}
+            permission: CAN_MANAGE_RUN
+        - name: conn-test-job
+          job:
+            id: ${resources.jobs.nzexport_conn_test.id}
             permission: CAN_MANAGE_RUN
 
 targets:

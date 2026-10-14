@@ -76,18 +76,37 @@ databricks bundle run nzexport_app --profile $P  # publica o código do app
 .venv/bin/python scripts/smoke_local.py          # E2E local com procedure simulada
 ```
 
-## Ligar no Netezza real (hoje a origem usa o driver `fake`)
+## Ligar no Netezza real (hoje a conexão usa o driver `fake`)
 
-1. Crie o secret scope com as chaves `host`, `port` (5480), `database`, `user` e `password`:
-   ```bash
-   databricks secrets create-scope netezza --profile $P
-   databricks secrets put-secret netezza host --profile $P   # repita para port, database, user, password
-   ```
-   O identity que executa o Job precisa de `READ` no scope.
-2. Configure o NCC do workspace serverless com a rota privada até o Netezza.
-3. Em **Administração → Origens**, mude o driver para `nzpy`, informe o secret scope e ajuste o limite global.
-4. Em cada tabela, informe o nome da procedure (ex.: `ADMIN.SP_EXPORTA_TABELA`) e o valor do parâmetro *tabela*.
-   O timeout da chamada vira o timeout de socket do `nzpy`.
+1. Em **🔌 Conexão Netezza**, informe:
+   - driver `nzpy`;
+   - host, porta (5480), banco da sessão, TLS, timeout e limite global de sessões;
+   - **usuário e senha**, que são gravados no secret scope `nzexport-netezza` e nunca no banco do app;
+   - os **padrões** de `p_banco`, `p_banco_ext_table` e `p_esquema_ext_table`.
+2. Clique em **Testar conexão**. O teste roda como Job serverless, pela mesma rede (NCC) do dispatcher, e:
+   - autentica;
+   - mostra o usuário e o banco da sessão, e a versão do Netezza;
+   - verifica se a procedure existe nos bancos das external tables.
+3. Em cada tabela, use o perfil **SP_CARGA_EVENTUAL** e informe `p_tabela`, `p_NomeColunaTempo` e, se forem
+   diferentes do padrão da conexão, `p_banco` e o banco e o esquema da external table. A tela mostra a prévia
+   exata do `CALL`.
+
+### Chamada da `SP_CARGA_EVENTUAL`
+
+```
+CALL SP_CARGA_EVENTUAL(p_banco, p_tabela, p_banco_ext_table, p_esquema_ext_table, p_dtini, p_dtfim, p_NomeColunaTempo)
+```
+
+- `p_dtini`/`p_dtfim` vêm do subbloco, em `AAAAMMDD`, com o fim inclusivo. A procedure filtra com
+  `BETWEEN p_dtini AND p_dtfim`, sem aspas, então a coluna de tempo deve ser numérica `AAAAMMDD`.
+- A sessão é aberta no **banco da external table**, porque a procedure faz `INSERT INTO esquema.tabela` sem o banco.
+- Os valores são validados (só letras, números e `_`) antes de montar o comando, porque o `nzpy` não escapa
+  parâmetros e a procedure concatena os valores em SQL dinâmico.
+- Cada tentativa registra o comando, o retorno da procedure e o arquivo esperado:
+  `STAGE.ADMIN.<TABELA>_<ini>_<fim>` → `/tmp/<TABELA>_<ini>_<fim>.dat`.
+- Cadastro incompleto gera falha `CONFIG`, sem chamar o Netezza e sem retry.
+- Atenção: a procedure faz `CREATE EXTERNAL TABLE` com nome fixo por tabela e período. Repetir um subbloco cuja
+  external table já foi criada falha com "já existe". Mantenha "Repetir resultado desconhecido" desligado.
 
 ## Contrato pedido ao cliente (procedure)
 

@@ -1,6 +1,7 @@
 """App Flask: plano de controle do exportador Netezza."""
 import logging
 import os
+import re
 from pathlib import Path
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
@@ -137,12 +138,14 @@ def create_app() -> Flask:
 
     @app.context_processor
     def _ctx():
-        ctx = {"current_user": _user(), "nav_dispatcher": None, "nav_attention": 0,
+        ctx = {"current_user": _user(), "nav_dispatcher": None, "nav_attention": 0, "nav_source_id": None,
                "now_utc": datetime.now(timezone.utc), "APP_TZ_NAME": str(APP_TZ)}
         if request.endpoint and request.endpoint != "static" and not request.path.endswith("/partial"):
             try:
                 db = services.db()
                 ctx["nav_dispatcher"] = repo.live_dispatcher(db)
+                first = db.one("SELECT source_id FROM source_connection ORDER BY source_id LIMIT 1")
+                ctx["nav_source_id"] = first["source_id"] if first else None
                 ctx["nav_attention"] = db.one("""
                     SELECT count(DISTINCT r.request_id) AS n FROM export_request r
                     LEFT JOIN export_subblock s ON s.request_id = r.request_id AND s.status = 'UNKNOWN'
@@ -413,25 +416,79 @@ def create_app() -> Flask:
     @app.get("/admin")
     def admin():
         db = services.db()
+        last_tests = {r["source_id"]: r for r in db.query(
+            "SELECT DISTINCT ON (source_id) * FROM connection_test ORDER BY source_id, requested_at DESC")}
         return render_template("admin.html", sources=repo.list_sources(db), tables=repo.list_tables(db),
-                               hooks=repo.list_hooks(db))
+                               hooks=repo.list_hooks(db), last_tests=last_tests)
 
-    @app.post("/admin/sources")
-    def admin_source_save():
+    # ------------------------------------------------------------ conexão Netezza
+    SECURITY_LEVELS = {0: "0 — preferir sem TLS", 1: "1 — preferir TLS (padrão)", 2: "2 — somente sem TLS",
+                       3: "3 — somente TLS"}
+
+    @app.get("/admin/sources/new")
+    @app.get("/admin/sources/<source_id>")
+    def admin_source_form(source_id=None):
+        db = services.db()
+        src = repo.get_source(db, source_id) if source_id else None
+        if source_id and not src:
+            abort(404)
+        tests = repo.connection_tests(db, source_id) if src else []
+        return render_template("admin_source_form.html", s=src, tests=tests, SECURITY_LEVELS=SECURITY_LEVELS,
+                               creds=services.credentials_present(source_id) if src else {},
+                               checks=repo.procedure_checks(db, source_id) if src else [],
+                               live_test=any(t["status"] in ("PENDING", "RUNNING") for t in tests))
+
+    @app.post("/admin/sources/save")
+    def admin_source_save_full():
         f = request.form
+        sid = (f.get("source_id") or "").strip().lower()
         try:
+            if not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", sid):
+                raise ValueError("identificador: letras minúsculas, números, _ ou - (ex.: netezza-prod)")
+            driver = f.get("driver") if f.get("driver") in ("fake", "nzpy") else "nzpy"
+            ident = lambda k: (f.get(k) or "").strip().upper() or None  # noqa: E731
+            for k in ("database", "default_source_database", "default_ext_database", "default_ext_schema"):
+                if ident(k) and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]{0,127}", ident(k)):
+                    raise ValueError(f"{k}: nome inválido ({ident(k)!r})")
+            host = (f.get("host") or "").strip()
+            if host and not re.fullmatch(r"[A-Za-z0-9.\-]{1,253}", host):
+                raise ValueError("host inválido")
+            if driver == "nzpy" and (not host or not ident("database")):
+                raise ValueError("para o driver nzpy, informe host e banco da sessão")
             opts = {}
-            for k in ("min_s", "max_s", "fail_pct", "unknown_pct", "security_level"):
+            for k in ("min_s", "max_s", "fail_pct", "unknown_pct"):
                 if f.get(k):
-                    opts[k] = float(f[k]) if k != "security_level" else int(f[k])
-            repo.save_source(services.db(), _user(), f["source_id"].strip(), f["display_name"].strip(),
-                             f["driver"], f.get("secret_scope", "").strip(),
-                             _int(f["max_sessions"], lo=1, hi=200), _int(f.get("connect_timeout_s"), 30, 1, 600),
-                             opts)
-            flash("Origem salva. O novo limite de sessões vale no próximo ciclo do dispatcher.", "info")
+                    opts[k] = float(f[k])
+            fields = dict(display_name=(f.get("display_name") or sid).strip(), driver=driver, host=host or None,
+                          port=_int(f.get("port"), 5480, 1, 65535), database=ident("database"),
+                          security_level=_int(f.get("security_level"), 1, 0, 3),
+                          connect_timeout_s=_int(f.get("connect_timeout_s"), 30, 1, 600),
+                          max_sessions=_int(f.get("max_sessions"), lo=1, hi=200),
+                          default_source_database=ident("default_source_database"),
+                          default_ext_database=ident("default_ext_database"),
+                          default_ext_schema=ident("default_ext_schema"), driver_options=opts)
+            user, password = (f.get("nz_user") or "").strip(), f.get("nz_password") or ""
+            if user or password:
+                services.put_credentials(sid, user or None, password or None)
+            repo.save_connection(services.db(), _user(), sid, fields, secret_scope=services.SECRET_SCOPE,
+                                 credentials_changed=bool(user or password))
+            flash("Conexão salva." + (" Credenciais gravadas no secret scope." if user or password else ""), "info")
         except (ValueError, KeyError) as e:
             flash(f"Erro: {e}", "error")
-        return redirect(url_for("admin"))
+            return redirect(url_for("admin_source_form", source_id=sid) if sid and repo.get_source(services.db(), sid)
+                            else url_for("admin_source_form"))
+        except Exception as e:  # noqa: BLE001 - ex.: sem permissão no secret scope
+            log.exception("falha ao salvar conexão")
+            flash(f"Erro ao gravar credenciais: {e}", "error")
+        return redirect(url_for("admin_source_form", source_id=sid))
+
+    @app.post("/admin/sources/<source_id>/test")
+    def admin_source_test(source_id):
+        if not repo.get_source(services.db(), source_id):
+            abort(404)
+        services.start_connection_test(source_id, _user())
+        flash("Teste de conexão iniciado: ele roda como Job, pela mesma rede do dispatcher (leva ~1 min).", "info")
+        return redirect(url_for("admin_source_form", source_id=source_id))
 
     @app.get("/admin/tables/new")
     @app.get("/admin/tables/<table_config_id>")

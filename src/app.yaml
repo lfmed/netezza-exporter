@@ -4,3 +4,7 @@ env:
     value: "projects/netezza-exporter/branches/production/endpoints/primary"
   - name: DISPATCHER_JOB_ID
     valueFrom: dispatcher-job
+  - name: CONN_TEST_JOB_ID
+    valueFrom: conn-test-job
+  - name: NETEZZA_SECRET_SCOPE
+    value: "nzexport-netezza"

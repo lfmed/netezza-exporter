@@ -217,6 +217,19 @@ CREATE TABLE IF NOT EXISTS hook_invocation (
   UNIQUE NULLS NOT DISTINCT (hook_id, request_id, request_table_id)
 );
 
+-- Testes de conexão (executados por um Job, pelo mesmo caminho de rede do dispatcher)
+CREATE TABLE IF NOT EXISTS connection_test (
+  test_id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_id        text NOT NULL REFERENCES source_connection ON DELETE CASCADE,
+  requested_by     text NOT NULL,
+  requested_at     timestamptz NOT NULL DEFAULT now(),
+  job_run_id       bigint,
+  status           text NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','RUNNING','OK','FAILED')),
+  finished_at      timestamptz,
+  details          jsonb
+);
+CREATE INDEX IF NOT EXISTS connection_test_src_idx ON connection_test (source_id, requested_at DESC);
+
 -- Execuções do dispatcher (para o app saber se precisa disparar o Job)
 CREATE TABLE IF NOT EXISTS dispatcher_run (
   run_id           bigint PRIMARY KEY,

@@ -22,7 +22,8 @@
       {% if nav_attention %}<span class="nav-badge" title="pedidos com falha ou subblocos em estado desconhecido">{{ nav_attention }}</span>{% endif %}</a>
     <a href="{{ url_for('request_new') }}" class="{{ 'active' if ep in ('request_new', 'request_review', 'request_from_gaps') }}">➕ Novo pedido</a>
     <div class="nav-section">Configuração</div>
-    <a href="{{ url_for('admin') }}" class="{{ 'active' if ep.startswith('admin') }}">⚙️ Administração</a>
+    <a href="{{ url_for('admin') }}" class="{{ 'active' if ep.startswith('admin') and not ep.startswith('admin_source') }}">⚙️ Administração</a>
+    <a href="{{ url_for('admin_source_form', source_id=nav_source_id) if nav_source_id else url_for('admin_source_form') }}" class="{{ 'active' if ep.startswith('admin_source') }}">🔌 Conexão Netezza</a>
   </nav>
 
   <div class="disp {{ 'live' if nav_dispatcher }}"><span class="dot"></span>

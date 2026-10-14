@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block content %}
+<section class="head">
+  <div><h1>🔌 {{ 'Conexão ' ~ s.display_name if s else 'Nova conexão Netezza' }}</h1>
+    <p>Parâmetros de conexão usados pelo dispatcher para chamar a procedure no Netezza</p></div>
+  {% if s %}<div class="actions">
+    <form method="post" action="{{ url_for('admin_source_test', source_id=s.source_id) }}"><button class="btn">🧪 Testar conexão</button></form>
+  </div>{% endif %}
+</section>
+
+<form method="post" action="{{ url_for('admin_source_save_full') }}" autocomplete="off">
+<div class="cols">
+  <div class="card">
+    <h2>Servidor</h2>
+    <div class="row">
+      <label>Identificador<input name="source_id" value="{{ s.source_id if s else '' }}" {{ 'readonly' if s }} required placeholder="netezza-prod"></label>
+      <label class="grow">Nome de exibição<input name="display_name" value="{{ s.display_name if s else '' }}" placeholder="Netezza produção"></label>
+      <label>Driver<select name="driver" id="driver">
+        <option value="nzpy" {{ 'selected' if not s or s.driver == 'nzpy' }}>nzpy (Netezza real)</option>
+        <option value="fake" {{ 'selected' if s and s.driver == 'fake' }}>fake (simulação, sem Netezza)</option></select></label>
+    </div>
+    <div class="row">
+      <label class="grow">Host<input name="host" value="{{ s.host or '' if s else '' }}" placeholder="netezza.sicoob.local"></label>
+      <label>Porta<input type="number" name="port" value="{{ s.port if s else 5480 }}" min="1" max="65535" style="width:7em"></label>
+      <label>Banco da sessão<input name="database" value="{{ s.database or '' if s else '' }}" placeholder="SYSTEM"></label>
+    </div>
+    <div class="row">
+      <label>Segurança (TLS)<select name="security_level">{% for k, v in SECURITY_LEVELS.items() %}<option value="{{ k }}" {{ 'selected' if (s and s.security_level == k) or (not s and k == 1) }}>{{ v }}</option>{% endfor %}</select></label>
+      <label>Timeout de conexão (s)<input type="number" name="connect_timeout_s" value="{{ s.connect_timeout_s if s else 30 }}" min="1" max="600" style="width:7em"></label>
+      <label>Limite global de sessões<input type="number" name="max_sessions" value="{{ s.max_sessions if s else 4 }}" min="1" max="200" style="width:7em"></label>
+    </div>
+    <p class="hint"><b>Limite global</b> = máximo de procedures executando ao mesmo tempo nesta conexão, somando todos os pedidos.
+      No perfil SP_CARGA_EVENTUAL, cada chamada abre a sessão no <b>banco da external table</b> da tabela; o banco da sessão acima é usado no teste e no perfil de 3 parâmetros.</p>
+  </div>
+
+  <div class="card">
+    <h2>Credenciais</h2>
+    {% if s %}
+    <p style="margin-top:0">
+      {% if s.driver == 'fake' %}<span class="badge">não exigidas no driver simulado</span>
+      {% elif creds.error %}<span class="badge s-unknown">não foi possível verificar o secret scope</span>
+      {% elif creds.user and creds.password %}<span class="badge s-done">usuário e senha definidos</span>
+      {% else %}<span class="badge s-failed">credenciais incompletas</span>{% endif %}
+      {% if s.credentials_set_at %}<br><small class="muted">última alteração {{ s.credentials_set_at|dt }} por {{ s.credentials_set_by }}</small>{% endif %}
+    </p>
+    {% endif %}
+    <label>Usuário<input name="nz_user" autocomplete="off" placeholder="{{ 'em branco = manter o atual' if s else 'usuário do Netezza' }}"></label>
+    <label style="margin-top:10px">Senha<input type="password" name="nz_password" autocomplete="new-password" placeholder="{{ 'em branco = manter a atual' if s else '' }}"></label>
+    <p class="hint">Gravados no secret scope <code>{{ s.secret_scope if s and s.secret_scope else 'nzexport-netezza' }}</code> do Databricks.
+      O app nunca guarda credenciais no banco nem as exibe depois de salvas.</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Padrões para os parâmetros da procedure</h2>
+  <p class="hint" style="margin-top:0">Usados quando o cadastro da tabela deixa o campo em branco.</p>
+  <div class="row">
+    <label class="grow"><span><code>p_banco</code> — banco de origem</span><input name="default_source_database" value="{{ s.default_source_database or '' if s else '' }}" placeholder="ex.: DWA"></label>
+    <label class="grow"><span><code>p_banco_ext_table</code> — banco da external table</span><input name="default_ext_database" value="{{ s.default_ext_database or '' if s else '' }}" placeholder="ex.: STAGE"></label>
+    <label class="grow"><span><code>p_esquema_ext_table</code> — esquema da external table</span><input name="default_ext_schema" value="{{ s.default_ext_schema or '' if s else '' }}" placeholder="ex.: ADMIN"></label>
+  </div>
+</div>
+
+<div class="card" id="fake-opts">
+  <h2>Simulação (driver fake)</h2>
+  {% set o = s.driver_options if s else {} %}
+  <div class="row">
+    <label>Duração mín. (s)<input name="min_s" value="{{ o.get('min_s', '') }}" style="width:6em"></label>
+    <label>Duração máx. (s)<input name="max_s" value="{{ o.get('max_s', '') }}" style="width:6em"></label>
+    <label>% falha<input name="fail_pct" value="{{ o.get('fail_pct', '') }}" style="width:6em"></label>
+    <label>% desconhecido<input name="unknown_pct" value="{{ o.get('unknown_pct', '') }}" style="width:6em"></label>
+  </div>
+</div>
+<div class="actions end"><a class="btn ghost" href="{{ url_for('admin') }}">Voltar</a><button class="btn">Salvar conexão</button></div>
+</form>
+
+{% if s %}
+<div class="card" id="tests" data-live="{{ '1' if live_test else '0' }}">
+  <div class="split"><h2>Testes de conexão</h2>
+    <small class="muted">Procedures verificadas: {% for d, p in checks %}<code>{{ p }}</code> em <code>{{ d }}</code>{{ ', ' if not loop.last }}{% else %}nenhuma tabela ativa nesta conexão{% endfor %}</small></div>
+  <table class="grid compact"><thead><tr><th>Quando</th><th>Por</th><th>Status</th><th>Resultado</th></tr></thead><tbody>
+  {% for t in tests %}<tr><td class="nowrap">{{ t.requested_at|dt }}</td><td><small>{{ t.requested_by }}</small></td>
+    <td>{% if t.status == 'OK' %}<span class="badge s-done">OK</span>{% elif t.status == 'FAILED' %}<span class="badge s-failed">Falhou</span>
+        {% else %}<span class="badge s-running">{{ 'Executando' if t.status == 'RUNNING' else 'Na fila' }}</span>{% endif %}</td>
+    <td>{% for r in t.details or [] %}<small>{{ '✅' if r.ok else '❌' }} <b>{{ r.check }}</b>: {{ r.detail }}</small><br>{% else %}<small class="muted">aguardando o Job…</small>{% endfor %}</td></tr>
+  {% else %}<tr><td colspan="4" class="empty">Nenhum teste ainda. Salve a conexão e clique em “Testar conexão”.</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const drv = document.getElementById('driver'), fake = document.getElementById('fake-opts');
+  const sync = () => { fake.style.display = drv.value === 'fake' ? '' : 'none'; };
+  drv.addEventListener('change', sync); sync();
+  const tests = document.getElementById('tests');
+  if (tests && tests.dataset.live === '1') setTimeout(() => location.reload(), 8000);
+})();
+</script>
+{% endblock %}

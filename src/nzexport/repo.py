@@ -56,6 +56,72 @@ def save_source(db: Database, actor: str, source_id: str, display_name: str, dri
                                                      "max_sessions": max_sessions})
 
 
+CONNECTION_FIELDS = ("display_name", "driver", "host", "port", "database", "security_level", "connect_timeout_s",
+                     "max_sessions", "default_source_database", "default_ext_database", "default_ext_schema",
+                     "driver_options")
+
+
+def get_source(db: Database, source_id: str):
+    return db.one("SELECT * FROM source_connection WHERE source_id = %s", (source_id,))
+
+
+def save_connection(db: Database, actor: str, source_id: str, fields: dict, secret_scope: str | None = None,
+                    credentials_changed: bool = False):
+    """Grava os parâmetros da conexão (sem credenciais; usuário/senha ficam no secret scope)."""
+    vals = [json.dumps(fields[f]) if f == "driver_options" else fields.get(f) for f in CONNECTION_FIELDS]
+    with db.tx() as conn:
+        conn.execute(f"""
+            INSERT INTO source_connection (source_id, {', '.join(CONNECTION_FIELDS)}, secret_scope, updated_by)
+            VALUES (%s, {', '.join(['%s'] * len(CONNECTION_FIELDS))}, %s, %s)
+            ON CONFLICT (source_id) DO UPDATE SET {', '.join(f'{f} = EXCLUDED.{f}' for f in CONNECTION_FIELDS)},
+              secret_scope = coalesce(EXCLUDED.secret_scope, source_connection.secret_scope),
+              updated_by = EXCLUDED.updated_by, updated_at = now()""",
+            (source_id, *vals, secret_scope, actor))
+        if credentials_changed:
+            conn.execute("""UPDATE source_connection SET credentials_set_at = now(), credentials_set_by = %s
+                            WHERE source_id = %s""", (actor, source_id))
+        log_event(conn, None, "CONNECTION_SAVED", actor,
+                  {"source_id": source_id, "driver": fields.get("driver"), "host": fields.get("host"),
+                   "database": fields.get("database"), "max_sessions": fields.get("max_sessions"),
+                   "credentials_changed": credentials_changed})
+
+
+def create_connection_test(db: Database, source_id: str, actor: str) -> str:
+    with db.tx() as conn:
+        return str(conn.execute("INSERT INTO connection_test (source_id, requested_by) VALUES (%s, %s) RETURNING test_id",
+                                (source_id, actor)).fetchone()["test_id"])
+
+
+def update_connection_test(db: Database, test_id: str, status: str, details=None, job_run_id: int | None = None):
+    with db.tx() as conn:
+        conn.execute("""UPDATE connection_test SET status = %s, details = coalesce(%s, details),
+                        job_run_id = coalesce(%s, job_run_id),
+                        finished_at = CASE WHEN %s IN ('OK','FAILED') THEN now() ELSE finished_at END
+                        WHERE test_id = %s""",
+                     (status, json.dumps(details) if details is not None else None, job_run_id, status, test_id))
+
+
+def connection_tests(db: Database, source_id: str, limit: int = 10):
+    return db.query("SELECT * FROM connection_test WHERE source_id = %s ORDER BY requested_at DESC LIMIT %s",
+                    (source_id, limit))
+
+
+def procedure_checks(db: Database, source_id: str) -> list[tuple[str, str]]:
+    """(banco, procedure) a verificar no teste: onde as tabelas desta conexão vão chamar a procedure."""
+    src = get_source(db, source_id) or {}
+    rows = db.query("""SELECT DISTINCT v.call_profile, v.ext_database, v.procedure_name
+                       FROM table_config tc JOIN table_config_version v
+                         ON v.table_config_id = tc.table_config_id AND v.config_version = tc.current_version
+                       WHERE tc.source_id = %s AND tc.active""", (source_id,))
+    out = set()
+    for r in rows:
+        db_name = (r["ext_database"] or src.get("default_ext_database")) if r["call_profile"] == "SP_CARGA_EVENTUAL" \
+            else src.get("database")
+        if db_name and r["procedure_name"]:
+            out.add((db_name, r["procedure_name"]))
+    return sorted(out)
+
+
 def list_tables(db: Database, only_active: bool = False):
     return db.query(f"""
         SELECT tc.table_config_id, tc.source_id, tc.active, tc.current_version, v.*

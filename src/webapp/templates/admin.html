@@ -4,28 +4,20 @@
   <div><h1>⚙️ Administração</h1><p>Origens Netezza, tabelas exportáveis e hooks pós-exportação</p></div></section>
 
 <div class="card">
-  <h2>Origens Netezza</h2>
-  <p class="hint"><b>Limite global de sessões</b> = máximo de procedures executando ao mesmo tempo nesta origem, somando todos os pedidos.
-    Driver <b>fake</b> simula a procedure (para testes); <b>nzpy</b> conecta no Netezza com as credenciais do secret scope (chaves <code>host, port, database, user, password</code>).</p>
-  {% for s in sources + [None] %}<form id="src-{{ loop.index }}" method="post" action="{{ url_for('admin_source_save') }}"></form>{% endfor %}
-  <table class="grid form-grid">
-    <thead><tr><th>ID</th><th>Nome</th><th>Driver</th><th>Secret scope</th><th>Limite global</th><th>Timeout conexão (s)</th><th>Opções fake (min_s / max_s / % falha / % desconhecido)</th><th></th></tr></thead>
-    <tbody>
-    {% for s in sources + [None] %}
-      <tr>
-        <td><input form="src-{{ loop.index }}" name="source_id" value="{{ s.source_id if s else '' }}" {{ 'readonly' if s }} required placeholder="nova origem" style="width:8em"></td>
-        <td><input form="src-{{ loop.index }}" name="display_name" value="{{ s.display_name if s else '' }}" required></td>
-        <td><select form="src-{{ loop.index }}" name="driver">{% for d in ['fake','nzpy'] %}<option {{ 'selected' if s and s.driver == d }}>{{ d }}</option>{% endfor %}</select></td>
-        <td><input form="src-{{ loop.index }}" name="secret_scope" value="{{ s.secret_scope or '' if s else '' }}" style="width:10em"></td>
-        <td><input form="src-{{ loop.index }}" type="number" name="max_sessions" min="1" max="200" value="{{ s.max_sessions if s else 4 }}" style="width:5em"></td>
-        <td><input form="src-{{ loop.index }}" type="number" name="connect_timeout_s" min="1" value="{{ s.connect_timeout_s if s else 30 }}" style="width:5em"></td>
-        {% set o = s.driver_options if s else {} %}
-        <td class="nowrap"><input form="src-{{ loop.index }}" name="min_s" value="{{ o.get('min_s', '') }}" style="width:3.5em"> <input form="src-{{ loop.index }}" name="max_s" value="{{ o.get('max_s', '') }}" style="width:3.5em">
-          <input form="src-{{ loop.index }}" name="fail_pct" value="{{ o.get('fail_pct', '') }}" style="width:3.5em"> <input form="src-{{ loop.index }}" name="unknown_pct" value="{{ o.get('unknown_pct', '') }}" style="width:3.5em"></td>
-        <td><button form="src-{{ loop.index }}" class="btn ghost small">Salvar</button></td>
-      </tr>
-    {% endfor %}
-    </tbody>
+  <div class="split"><h2>🔌 Conexões Netezza</h2><a class="btn" href="{{ url_for('admin_source_form') }}">+ Nova conexão</a></div>
+  <table class="grid">
+    <thead><tr><th>Conexão</th><th>Driver</th><th>Servidor</th><th>Credenciais</th><th>Padrões da procedure</th><th>Limite global</th><th>Último teste</th><th></th></tr></thead>
+    <tbody>{% for s in sources %}
+      {% set lt = last_tests.get(s.source_id) %}
+      <tr><td><a href="{{ url_for('admin_source_form', source_id=s.source_id) }}"><b>{{ s.display_name }}</b></a><br><small class="muted">{{ s.source_id }}</small></td>
+        <td>{% if s.driver == 'fake' %}<span class="badge s-unknown">simulado</span>{% else %}<span class="badge s-running">nzpy</span>{% endif %}</td>
+        <td><small>{{ s.host or '—' }}{% if s.host %}:{{ s.port }}{% endif %}<br>banco {{ s.database or '—' }}</small></td>
+        <td>{% if s.credentials_set_at %}<small>definidas em {{ s.credentials_set_at|dt }}</small>{% elif s.driver == 'fake' %}<small class="muted">não exigidas</small>{% else %}<span class="badge s-failed">não definidas</span>{% endif %}</td>
+        <td><small>p_banco <code>{{ s.default_source_database or '—' }}</code><br>ext. <code>{{ s.default_ext_database or '—' }}.{{ s.default_ext_schema or '—' }}</code></small></td>
+        <td>{{ s.max_sessions }}</td>
+        <td>{% if lt %}{% if lt.status == 'OK' %}<span class="badge s-done">OK</span>{% elif lt.status == 'FAILED' %}<span class="badge s-failed">Falhou</span>{% else %}<span class="badge s-running">em andamento</span>{% endif %}<br><small class="muted">{{ lt.requested_at|dt }}</small>{% else %}—{% endif %}</td>
+        <td><a class="btn ghost small" href="{{ url_for('admin_source_form', source_id=s.source_id) }}">Configurar</a></td></tr>
+    {% else %}<tr><td colspan="8" class="empty">Nenhuma conexão. <a href="{{ url_for('admin_source_form') }}">Configurar a conexão Netezza</a></td></tr>{% endfor %}</tbody>
   </table>
 </div>
 

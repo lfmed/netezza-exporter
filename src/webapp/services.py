@@ -57,6 +57,43 @@ def ensure_dispatcher(force: bool = False) -> int | None:
         return None
 
 
+SECRET_SCOPE = os.environ.get("NETEZZA_SECRET_SCOPE", "nzexport-netezza")
+
+
+def put_credentials(source_id: str, user: str | None, password: str | None):
+    """Grava usuário/senha no secret scope (o app nunca guarda nem exibe as credenciais)."""
+    w = workspace()
+    if user:
+        w.secrets.put_secret(scope=SECRET_SCOPE, key=f"{source_id}-user", string_value=user)
+    if password:
+        w.secrets.put_secret(scope=SECRET_SCOPE, key=f"{source_id}-password", string_value=password)
+
+
+def credentials_present(source_id: str) -> dict:
+    try:
+        keys = {s.key for s in workspace().secrets.list_secrets(scope=SECRET_SCOPE)}
+    except Exception:  # noqa: BLE001
+        return {"user": False, "password": False, "error": True}
+    return {"user": f"{source_id}-user" in keys, "password": f"{source_id}-password" in keys, "error": False}
+
+
+def start_connection_test(source_id: str, actor: str) -> str:
+    """Registra o teste e dispara o Job que testa a conexão pela mesma rede do dispatcher."""
+    test_id = repo.create_connection_test(db(), source_id, actor)
+    job = os.environ.get("CONN_TEST_JOB_ID")
+    if not job:
+        repo.update_connection_test(db(), test_id, "FAILED", details=[
+            {"check": "execução do teste", "ok": False, "detail": "CONN_TEST_JOB_ID não configurado no app"}])
+        return test_id
+    try:
+        run = workspace().jobs.run_now(job_id=int(job), job_parameters={"source_id": source_id, "test_id": test_id})
+        repo.update_connection_test(db(), test_id, "PENDING", job_run_id=run.run_id)
+    except Exception as e:  # noqa: BLE001
+        repo.update_connection_test(db(), test_id, "FAILED", details=[
+            {"check": "execução do teste", "ok": False, "detail": f"falha ao disparar o job: {e}"}])
+    return test_id
+
+
 def cancel_dispatcher(actor: str) -> int:
     job_id = _job_id()
     if not job_id:
