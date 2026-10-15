@@ -44,6 +44,8 @@ Documentos: `README.md` (operação), `DEPLOY.md` (deploy no cliente), `CHANGELO
 | Catálogo dev | `stable_classic_pg4xe1_catalog`; warehouse para testes `9981e1dca61efe86` |
 | Health | `GET /api/health` → `{"ok":true,"version":"..."}` (`/healthz` é interceptado pela plataforma) |
 
+Plano pendente de aprovação: `plano_filtro_between.md` (tipo de filtro Data/Número/Sem filtro, alvo v1.010).
+
 **Pendente do lado do usuário:** host, credenciais e landing do Netezza no app. Os targets `hml`/`prd` do
 `databricks.yml` têm placeholders `<...>` à espera dos valores do cliente.
 
@@ -54,6 +56,8 @@ databricks bundle run nzexport_pos_deploy -t dev --profile fe-vm-stable-classic-
 databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
 ```
 - Não existe `src/app.yaml`: a configuração do app fica em `databricks.yml` (`config.command`/`env` + `value_from`).
+- Política de serverless do app: variável `serverless_policy_id` → `budget_policy_id` do app (vazia = padrão do
+  workspace, hoje `79898ab9-344d-47f6-a180-de5a332ef681`); placeholders em hml/prd (v1.009).
 - O projeto Lakebase é recurso do bundle com `prevent_destroy`; em dev foi vinculado
   (`bundle deployment bind nzexport_lakebase projects/netezza-exporter`). O secret scope saiu do bundle na v1.008.
 - Resultado esperado hoje do pós-deploy: sem erros; avisos de host, credenciais e landing ainda não configurados.

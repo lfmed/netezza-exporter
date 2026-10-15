@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.009 — 2026-10-15
+- Variável serverless_policy_id no bundle: política de serverless (budget policy) aplicada ao app; vazia = política padrão do workspace; placeholders em hml/prd.
+
 ## 1.008 — 2026-10-15
 - App só lê o secret scope do Netezza, que já existe no ambiente: sai a edição de usuário e senha (status host/porta/usuário/senha só leitura); o scope deixa de ser recurso do bundle (sem MANAGE para grupo, sem grupo_owner); o pós-deploy só confere a leitura (jobs e app) e não altera ACLs; colunas credentials_set_* removidas.
 

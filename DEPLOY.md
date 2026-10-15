@@ -34,6 +34,7 @@ Em `databricks.yml`, preencha o target (`hml` ou `prd`):
 | `app_name` | `netezza-exporter` | nome do app |
 | `lakebase_project` / `lakebase_endpoint` | `netezza-exporter-prd` / `projects/netezza-exporter-prd/branches/production/endpoints/primary` | banco do app |
 | `secret_scope` | `nzexport-netezza` | scope existente com host, porta e credenciais do Netezza |
+| `serverless_policy_id` | `79898ab9-...` | política de serverless (budget policy) do app; vazio = padrão do workspace |
 | `dest_catalogs` | `migracao` (vírgula para vários) | catálogos que o app navega (`BROWSE`) |
 
 No CI/CD, qualquer variável pode vir de `BUNDLE_VAR_<nome>` (por exemplo, `BUNDLE_VAR_svc_hash`).

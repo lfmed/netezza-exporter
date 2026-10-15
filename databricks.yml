@@ -20,6 +20,9 @@ variables:
   dest_catalogs:
     description: Catálogos de destino (vírgula) em que o app recebe BROWSE para o navegador do catálogo
     default: ""
+  serverless_policy_id:
+    description: ID da política de serverless (budget policy) aplicada ao app. Vazio = política padrão do workspace.
+    default: ""
   svc_hash:
     description: Application ID do service principal que roda os jobs (run_as) e lê o secret scope. Obrigatório em hml/prd.
     default: ""
@@ -181,6 +184,7 @@ resources:
       name: ${var.app_name}
       description: Migração Netezza → Databricks — pedidos por subbloco, importação para Delta e completude
       source_code_path: ./src
+      budget_policy_id: ${var.serverless_policy_id}
       config:
         command: ["gunicorn", "app:app", "-w", "2", "--threads", "8", "-b", "0.0.0.0:8000", "--timeout", "120"]
         env:
@@ -239,6 +243,7 @@ targets:
       secret_scope: nzexport-netezza-hml
       dest_catalogs: <catalogo_destino_hml>
       svc_hash: <application_id_do_sp_hml>
+      serverless_policy_id: <id_da_politica_serverless_hml>
 
   prd:
     workspace:
@@ -253,3 +258,4 @@ targets:
       secret_scope: nzexport-netezza
       dest_catalogs: <catalogo_destino_prd>
       svc_hash: <application_id_do_sp_prd>
+      serverless_policy_id: <id_da_politica_serverless_prd>
