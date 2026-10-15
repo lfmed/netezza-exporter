@@ -43,6 +43,18 @@ Em `databricks.yml`, preencha o target (`hml` ou `prd`):
 > também o host e procura o endpoint correspondente; o pós-deploy avisa e mostra o caminho a colocar no target.
 > Antes disso, o host gerava `NotFound: No API found for 'GET /postgres/ep-...'`.
 
+> **Identidade dos jobs no Lakebase.** O pós-deploy migra o banco como o `svc_hash` (`run_as`), que vira dono do
+> schema `nzexport`. Se o projeto Lakebase foi criado por outra identidade (ex.: um usuário fez o `bundle deploy`), o
+> `svc_hash` não tem role no Postgres e a conexão falha. Até a v1.012 isso aparecia como `PoolTimeout: couldn't get a
+> connection after 30.00 sec`; desde a v1.013 o pós-deploy para nesse ponto e mostra o erro do Postgres com o comando.
+> Correção (dono do projeto):
+> ```bash
+> databricks postgres create-role projects/<projeto>/branches/production --role-id <svc_hash> \
+>   --json '{"spec": {"identity_type": "SERVICE_PRINCIPAL", "postgres_role": "<svc_hash>", "auth_method": "LAKEBASE_OAUTH_V1"}}'
+> # e, conectado como dono:  GRANT CREATE ON DATABASE databricks_postgres TO "<svc_hash>";
+> ```
+> Ou faça o `bundle deploy` com o próprio `svc_hash` (CI/CD), que assim cria o projeto e já é o dono.
+
 No CI/CD, qualquer variável pode vir de `BUNDLE_VAR_<nome>` (por exemplo, `BUNDLE_VAR_svc_hash`).
 
 ## 3. Deploy (todo deploy, sempre nesta ordem)

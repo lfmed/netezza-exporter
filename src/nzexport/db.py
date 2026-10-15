@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 import psycopg
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 from databricks.sdk import WorkspaceClient
 
 SCHEMA = "nzexport"
@@ -94,13 +94,18 @@ class LakebaseConfig:
 class Database:
     def __init__(self, cfg: LakebaseConfig, min_size: int = 1, max_size: int = 10):
         self.cfg = cfg
-        tokens = cfg.tokens
+        self.last_error: str | None = None   # o pool repete em silêncio: guarda o motivo para o PoolTimeout
+        tokens, owner = cfg.tokens, self
 
         class _OAuthConnection(psycopg.Connection):
             @classmethod
             def connect(cls, conninfo="", **kw):
-                kw["password"] = tokens.get()
-                return super().connect(conninfo, **kw)
+                try:
+                    kw["password"] = tokens.get()
+                    return super().connect(conninfo, **kw)
+                except Exception as e:
+                    owner.last_error = f"{type(e).__name__}: {str(e).strip()[:500]}"
+                    raise
 
         self.pool = ConnectionPool(
             kwargs={**cfg.conninfo(), "row_factory": dict_row},
@@ -111,14 +116,27 @@ class Database:
         )
 
     @contextmanager
+    def connection(self):
+        """Conexão do pool; num PoolTimeout, mostra o último erro real ao conectar (rede, role, token...)."""
+        try:
+            conn = self.pool.getconn()
+        except PoolTimeout as e:
+            raise PoolTimeout(f"{e}. Último erro ao conectar em {self.cfg.host} como {self.cfg.user}: "
+                              f"{self.last_error or 'desconhecido'}") from None
+        try:
+            yield conn
+        finally:
+            self.pool.putconn(conn)
+
+    @contextmanager
     def tx(self):
         """Transação: commit ao sair sem erro, rollback em exceção."""
-        with self.pool.connection() as conn:
+        with self.connection() as conn:
             with conn.transaction():
                 yield conn
 
     def query(self, sql: str, params=None) -> list[dict]:
-        with self.pool.connection() as conn:
+        with self.connection() as conn:
             return conn.execute(sql, params).fetchall()
 
     def one(self, sql: str, params=None) -> dict | None:

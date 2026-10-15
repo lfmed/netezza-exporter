@@ -50,6 +50,25 @@ def identidade(w: WorkspaceClient) -> dict:
     return {"nome": nome, "principal": sp or nome, "sp": bool(sp)}
 
 
+def dica_banco(e: Exception, cfg, eu: dict) -> str:
+    """Quem resolve uma falha ao conectar no Lakebase, conforme a mensagem do Postgres."""
+    msg = str(e).lower()
+    branch = cfg.endpoint.rsplit("/endpoints/", 1)[0]
+    if any(k in msg for k in ("password authentication", "role", "authentication failed", "not authorized", "no pg_hba")):
+        return (f"dono do projeto Lakebase: a identidade dos jobs ({eu['principal']}) precisa de um role no branch. "
+                f"databricks postgres create-role {branch} --role-id {eu['principal']} --json "
+                f"'{{\"spec\": {{\"identity_type\": \"{'SERVICE_PRINCIPAL' if eu['sp'] else 'USER'}\", "
+                f"\"postgres_role\": \"{eu['principal']}\", \"auth_method\": \"LAKEBASE_OAUTH_V1\"}}}}' "
+                f"e GRANT CREATE ON DATABASE {cfg.database} TO \"{eu['principal']}\" (ou faça o deploy com essa identidade, "
+                f"que vira dona do projeto)")
+    if "permission denied" in msg:
+        return (f"dono do schema nzexport: ele foi criado por outra identidade; a identidade dos jobs "
+                f"({eu['principal']}) precisa ser dona do schema (ALTER SCHEMA nzexport OWNER TO \"{eu['principal']}\")")
+    if any(k in msg for k in ("timeout", "could not connect", "connection refused", "name or service")):
+        return f"rede: o serverless dos jobs precisa alcançar {cfg.host}:5432 (Lakebase do mesmo workspace)"
+    return "deploy do bundle / permissão no projeto Lakebase"
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--endpoint", required=True)
@@ -92,7 +111,8 @@ def main():
             rel.add(ERRO, "acesso do app ao banco", f"role {app_sp} ainda não existe no Lakebase: o recurso postgres do "
                     "app não foi aplicado. Rode 'bundle deploy' e depois este job de novo.", "deploy do bundle")
     except Exception as e:  # noqa: BLE001
-        rel.add(ERRO, "banco do app (Lakebase)", e, "deploy do bundle / permissão no projeto Lakebase")
+        rel.add(ERRO, "banco do app (Lakebase)", f"{type(e).__name__}: {str(e).strip()[:600]}", dica_banco(e, cfg, eu))
+        encerrar(rel)  # sem banco, as demais etapas só repetiriam o erro (antes: PoolTimeout escondia a causa)
 
     # 3. secret scope -----------------------------------------------------------------------------------------
     # O app e os jobs só LEEM o scope, que já existe no ambiente; o pós-deploy não concede nem altera ACLs.

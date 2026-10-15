@@ -116,7 +116,7 @@ class Importer:
                              (ids, self.owner))
 
     def _has_work(self) -> bool:
-        with self.db.pool.connection() as conn:
+        with self.db.connection() as conn:
             return lifecycle.import_due(conn)
 
     def _reap_expired(self, stats: Counter):

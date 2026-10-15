@@ -131,4 +131,4 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
 navegador · 1.003 landing e formato do arquivo · 1.004 job importador · 1.005 deploy repetível (targets, pós-deploy,
 secret scope) · 1.006 vazão (reg/s) por subbloco, tabela e histórica · 1.007 host/porta no secret scope · 1.008 app só
 lê o scope · 1.009 política de serverless do app · 1.010 tipo de filtro (Data, Número, Sem filtro) · 1.011 `lakebase_endpoint` aceita o host · 1.012 nome do
-secret scope só pela configuração do deploy.
+secret scope só pela configuração do deploy · 1.013 erro real do Lakebase no lugar do `PoolTimeout`.

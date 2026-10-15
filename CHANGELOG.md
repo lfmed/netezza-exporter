@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.013 — 2026-10-15
+- Falha ao conectar no Lakebase com a causa real: o PoolTimeout passa a trazer o último erro do Postgres (host, usuário e mensagem); o pós-deploy para na falha de banco, sem seguir para as conferências que mascaravam o erro, e diz quem resolve (role da identidade dos jobs com o comando create-role, dono do schema ou rede); DEPLOY.md explica a identidade dos jobs no Lakebase.
+
 ## 1.012 — 2026-10-15
 - Nome do secret scope do Netezza só pela configuração do deploy (variável secret_scope do bundle): o app recebe em NETEZZA_SECRET_SCOPE e o dispatcher e o teste de conexão no parâmetro --secret-scope; o app mostra o nome na conexão e na Administração, sem campo e sem gravar (coluna source_connection.secret_scope removida).
 

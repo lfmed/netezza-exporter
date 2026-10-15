@@ -284,7 +284,7 @@ def review(db: Database, tables: list[TableRequest]) -> list[TableRequest]:
     são mostrados e excluídos do lote; só o restante vira subbloco. Em reprocessamento, os concluídos
     entram no lote e serão substituídos; os em execução continuam excluídos.
     """
-    with db.pool.connection() as conn:
+    with db.connection() as conn:
         for i, t in enumerate(tables):
             t.pieces, t.blocks, t.excluded, t.conflicts, t.superseded = [], [], [], [], []
             cfg = conn.execute("""SELECT tc.current_version, tc.active, v.filter_type
