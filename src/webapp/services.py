@@ -73,8 +73,28 @@ def credentials_present(source_id: str) -> dict:
     try:
         keys = {s.key for s in workspace().secrets.list_secrets(scope=SECRET_SCOPE)}
     except Exception:  # noqa: BLE001
-        return {"user": False, "password": False, "error": True}
-    return {"user": f"{source_id}-user" in keys, "password": f"{source_id}-password" in keys, "error": False}
+        return {"host": False, "port": False, "user": False, "password": False, "error": True}
+    return {k: f"{source_id}-{k}" in keys for k in ("host", "port", "user", "password")} | {"error": False}
+
+
+def connection_url(source: dict) -> dict:
+    """URL de conexão (só leitura): host e porta vêm do secret scope, o banco da sessão do cadastro."""
+    import base64
+
+    sid, w = source["source_id"], workspace()
+
+    def read(key):
+        return base64.b64decode(w.secrets.get_secret(scope=SECRET_SCOPE, key=f"{sid}-{key}").value).decode().strip()
+
+    try:
+        host = read("host")
+    except Exception:  # noqa: BLE001 - chave ausente ou sem permissão
+        return {"url": None, "missing": f"{sid}-host"}
+    try:
+        port = read("port") or "5480"
+    except Exception:  # noqa: BLE001 - porta é opcional
+        port = "5480"
+    return {"url": f"jdbc:netezza://{host}:{port}/{source.get('database') or '<banco>'}", "missing": None}
 
 
 def start_connection_test(source_id: str, actor: str) -> str:

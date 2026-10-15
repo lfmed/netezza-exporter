@@ -39,7 +39,7 @@ def list_sources(db: Database):
     return db.query("SELECT * FROM source_connection ORDER BY source_id")
 
 
-CONNECTION_FIELDS = ("display_name", "driver", "host", "port", "database", "security_level", "connect_timeout_s",
+CONNECTION_FIELDS = ("display_name", "driver", "database", "security_level", "connect_timeout_s",
                      "max_sessions", "default_source_database", "default_ext_database", "default_ext_schema",
                      "landing_root", "landing_dat_folder", "landing_error_folder", "landing_work_folder",
                      "max_imports", "file_wait_min")
@@ -51,7 +51,7 @@ def get_source(db: Database, source_id: str):
 
 def save_connection(db: Database, actor: str, source_id: str, fields: dict, secret_scope: str | None = None,
                     credentials_changed: bool = False):
-    """Grava os parâmetros da conexão (sem credenciais; usuário/senha ficam no secret scope)."""
+    """Grava os parâmetros da conexão (host, porta, usuário e senha ficam no secret scope)."""
     vals = [fields.get(f) for f in CONNECTION_FIELDS]
     with db.tx() as conn:
         conn.execute(f"""
@@ -65,7 +65,7 @@ def save_connection(db: Database, actor: str, source_id: str, fields: dict, secr
             conn.execute("""UPDATE source_connection SET credentials_set_at = now(), credentials_set_by = %s
                             WHERE source_id = %s""", (actor, source_id))
         log_event(conn, None, "CONNECTION_SAVED", actor,
-                  {"source_id": source_id, "driver": fields.get("driver"), "host": fields.get("host"),
+                  {"source_id": source_id, "driver": fields.get("driver"),
                    "database": fields.get("database"), "max_sessions": fields.get("max_sessions"),
                    "credentials_changed": credentials_changed})
 

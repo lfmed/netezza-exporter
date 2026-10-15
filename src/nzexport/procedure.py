@@ -246,17 +246,28 @@ def build_client(source: dict, secrets_reader=None):
     if source.get("driver", "nzpy") == "nzpy":
         scope = source.get("secret_scope")
         if not scope or secrets_reader is None:
-            raise ConnectError("conexão nzpy sem credenciais configuradas (usuário/senha)")
+            raise ConnectError("conexão nzpy sem secret scope configurado (host, porta, usuário e senha)")
         sid = source["source_id"]
+        try:
+            host = secrets_reader(scope, f"{sid}-host").strip()
+        except Exception:  # noqa: BLE001
+            raise ConnectError(f"host do Netezza não encontrado no secret scope {scope} "
+                               f"(chave {sid}-host: databricks secrets put-secret)") from None
+        try:
+            port = secrets_reader(scope, f"{sid}-port").strip() or "5480"
+        except Exception:  # noqa: BLE001 - porta é opcional
+            port = "5480"
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            raise ConnectError(f"porta inválida na chave {sid}-port do secret scope")
         try:
             user = secrets_reader(scope, f"{sid}-user")
             password = secrets_reader(scope, f"{sid}-password")
         except Exception:  # noqa: BLE001
             raise ConnectError("credenciais da conexão não encontradas no secret scope; "
                                "configure usuário e senha em Administração → Conexão") from None
-        if not source.get("host") or not source.get("database"):
-            raise ConnectError("conexão sem host ou banco configurado (Administração → Conexão)")
-        params = {"host": source["host"], "port": source.get("port") or 5480, "database": source["database"],
+        if not source.get("database"):
+            raise ConnectError("conexão sem banco da sessão configurado (Administração → Conexão)")
+        params = {"host": host, "port": int(port), "database": source["database"],
                   "user": user, "password": password, "security_level": source.get("security_level", 1)}
         return NzpyProcedureClient(params, connect_timeout_s=source.get("connect_timeout_s", 30))
     raise ValueError(f"driver desconhecido: {source['driver']}")

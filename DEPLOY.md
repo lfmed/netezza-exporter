@@ -55,20 +55,27 @@ O relatório aparece no log do job e em **Administração → Último pós-deplo
 
 > O projeto Lakebase e o secret scope têm `prevent_destroy`: um `bundle destroy` não apaga a migração nem as credenciais.
 
-## 4. Credenciais do Netezza (valor nunca no Git)
+## 4. Servidor e credenciais do Netezza (valor nunca no Git)
 
-Escolha uma das formas:
+**Host e porta** ficam só no secret scope. O app mostra a URL de conexão (`jdbc:netezza://host:porta/banco`), mas não
+deixa editar. Grave pelo CI/CD ou por um administrador do scope:
+```bash
+databricks secrets put-secret nzexport-netezza netezza-host --string-value "$NZ_HOST"
+databricks secrets put-secret nzexport-netezza netezza-port --string-value "5480"   # opcional, padrão 5480
+```
+
+**Usuário e senha**: escolha uma das formas:
 - **Pelo app**: em **🔌 Conexão Netezza**, informe usuário e senha. O app grava no secret scope e não as exibe depois.
 - **Pelo CI/CD**, logo após o deploy, com o valor vindo do cofre do pipeline:
   ```bash
   databricks secrets put-secret nzexport-netezza netezza-user     --string-value "$NZ_USER"
   databricks secrets put-secret nzexport-netezza netezza-password --string-value "$NZ_PASSWORD"
   ```
-  As chaves são `<id da conexão>-user` e `<id da conexão>-password`. A conexão padrão é `netezza`.
+  As chaves são `<id da conexão>-host`, `-port`, `-user` e `-password`. A conexão padrão é `netezza`.
 
 ## 5. Primeiro uso no app
 
-1. **🔌 Conexão Netezza**: host, porta, banco, padrões de `p_banco` e do banco e esquema da external table, e o
+1. **🔌 Conexão Netezza**: confira a URL de conexão e informe o banco, padrões de `p_banco` e do banco e esquema da external table, e o
    **caminho da landing** (`s3://...`) com as pastas do `.dat`, de erro e de limpeza. Depois, **Testar conexão**.
 2. **Administração → Tabelas exportáveis**: cadastre as tabelas pela tela ou por **CSV** (botão "Baixar modelo CSV"),
    com procedure, coluna de tempo, destino e escopo da migração.

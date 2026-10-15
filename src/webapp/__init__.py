@@ -445,7 +445,9 @@ def create_app() -> Flask:
             deploy = db.one("SELECT * FROM deploy_check ORDER BY checked_at DESC LIMIT 1")
         except Exception:  # noqa: BLE001 - tabela criada pelo pós-deploy
             deploy = None
-        return render_template("admin.html", sources=repo.list_sources(db), tables=repo.list_tables(db),
+        sources = repo.list_sources(db)
+        return render_template("admin.html", sources=sources, tables=repo.list_tables(db),
+                               urls={s["source_id"]: services.connection_url(s) for s in sources},
                                hooks=repo.list_hooks(db), last_tests=last_tests, deploy=deploy)
 
     # ------------------------------------------------------------ conexão Netezza
@@ -462,6 +464,8 @@ def create_app() -> Flask:
         tests = repo.connection_tests(db, source_id) if src else []
         return render_template("admin_source_form.html", s=src, tests=tests, SECURITY_LEVELS=SECURITY_LEVELS,
                                creds=services.credentials_present(source_id) if src else {},
+                               conn_url=services.connection_url(src) if src else None,
+                               secret_scope=services.SECRET_SCOPE,
                                checks=repo.procedure_checks(db, source_id) if src else [],
                                live_test=any(t["status"] in ("PENDING", "RUNNING") for t in tests))
 
@@ -477,11 +481,8 @@ def create_app() -> Flask:
             for k in ("database", "default_source_database", "default_ext_database", "default_ext_schema"):
                 if ident(k) and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]{0,127}", ident(k)):
                     raise ValueError(f"{k}: nome inválido ({ident(k)!r})")
-            host = (f.get("host") or "").strip()
-            if host and not re.fullmatch(r"[A-Za-z0-9.\-]{1,253}", host):
-                raise ValueError("host inválido")
-            if not host or not ident("database"):
-                raise ValueError("informe host e banco da sessão")
+            if not ident("database"):
+                raise ValueError("informe o banco da sessão")
             landing = (f.get("landing_root") or "").strip().rstrip("/")
             if landing and not re.fullmatch(r"(s3://[a-z0-9][a-z0-9.\-]{1,62}|/Volumes/[A-Za-z0-9_]+/[A-Za-z0-9_]+/[A-Za-z0-9_]+)(/[A-Za-z0-9_.\-]+)*", landing):
                 raise ValueError("caminho da landing: use s3://<bucket>/<prefixo> ou /Volumes/<catálogo>/<schema>/<volume>/<pasta>")
@@ -492,8 +493,8 @@ def create_app() -> Flask:
                     raise ValueError(f"pasta inválida: {v!r}")
             if len(set(folders.values())) != 3:
                 raise ValueError("as pastas do .dat, de erro e de limpeza precisam ser diferentes")
-            fields = dict(display_name=(f.get("display_name") or sid).strip(), driver=driver, host=host or None,
-                          port=_int(f.get("port"), 5480, 1, 65535), database=ident("database"),
+            fields = dict(display_name=(f.get("display_name") or sid).strip(), driver=driver,
+                          database=ident("database"),
                           security_level=_int(f.get("security_level"), 1, 0, 3),
                           connect_timeout_s=_int(f.get("connect_timeout_s"), 30, 1, 600),
                           max_sessions=_int(f.get("max_sessions"), lo=1, hi=200),

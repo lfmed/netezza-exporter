@@ -51,3 +51,21 @@ def test_legacy_three_param_profile_and_iso_dates():
                     "source_table": "DW.FATO_X", "date_format": "YYYY-MM-DD"}, SOURCE, date(2024, 1, 1), date(2024, 1, 31))
     assert s.statement() == "CALL ADMIN.SP_EXPORTA_TABELA('DW.FATO_X', '2024-01-01', '2024-01-31')"
     assert s.session_database is None
+
+
+def test_build_client_le_host_e_porta_do_secret_scope():
+    from nzexport.procedure import ConnectError, build_client
+
+    segredos = {"netezza-host": "nz.sicoob.local", "netezza-user": "u", "netezza-password": "p"}
+
+    def ler(scope, key):
+        return segredos[key]
+
+    src = {"source_id": "netezza", "secret_scope": "nzexport-netezza", "database": "SYSTEM"}
+    c = build_client(src, secrets_reader=ler)
+    assert (c.conn_params["host"], c.conn_params["port"]) == ("nz.sicoob.local", 5480)
+    segredos["netezza-port"] = "5481"
+    assert build_client(src, secrets_reader=ler).conn_params["port"] == 5481
+    del segredos["netezza-host"]
+    with pytest.raises(ConnectError, match="netezza-host"):
+        build_client(src, secrets_reader=ler)

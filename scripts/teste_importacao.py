@@ -80,7 +80,7 @@ def main():
     migrate.run(cfg)
     db = Database(cfg, max_size=4)
     with db.tx() as c:
-        c.execute("""UPDATE source_connection SET host = 'nz.teste', database = 'SYSTEM',
+        c.execute("""UPDATE source_connection SET database = 'SYSTEM',
                      default_source_database = 'DWA', default_ext_database = 'STAGE', default_ext_schema = 'ADMIN',
                      landing_root = %s, landing_dat_folder = 'tmp', landing_error_folder = 'erro',
                      landing_work_folder = 'limpeza', max_imports = 2, file_wait_min = 1 WHERE source_id = 'netezza'""",

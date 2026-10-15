@@ -136,6 +136,12 @@ def conferir_externos(w, db, rel, eu, scope):
             keys = {s.key for s in w.secrets.list_secrets(scope=scope)}
         except Exception:  # noqa: BLE001
             keys = set()
+        if f"{sid}-host" in keys:
+            rel.add(OK, f"host {sid}", "host do Netezza presente no secret scope"
+                    + ("" if f"{sid}-port" in keys else " (porta padrão 5480)"))
+        else:
+            rel.add(AVISO, f"host {sid}", "host do Netezza não definido no secret scope",
+                    f"CI/CD ou administrador: databricks secrets put-secret {scope} {sid}-host (e {sid}-port)")
         if {f"{sid}-user", f"{sid}-password"} <= keys:
             rel.add(OK, f"credenciais {sid}", "usuário e senha presentes no secret scope")
         else:
@@ -157,7 +163,7 @@ def conferir_externos(w, db, rel, eu, scope):
                         f"administrador do Unity Catalog: external location cobrindo o caminho com READ FILES e "
                         f"WRITE FILES para {eu['principal']}")
         # conexão Netezza (só se configurada)
-        if src.get("host") and {f"{sid}-user", f"{sid}-password"} <= keys:
+        if {f"{sid}-host", f"{sid}-user", f"{sid}-password"} <= keys:
             try:
                 client = build_client(src, secrets_reader=lambda s, k: base64.b64decode(
                     w.secrets.get_secret(scope=s, key=k).value).decode())

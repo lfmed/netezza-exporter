@@ -17,9 +17,13 @@
       <label>Identificador<input name="source_id" value="{{ s.source_id if s else '' }}" {{ 'readonly' if s }} required placeholder="netezza-prod"></label>
       <label class="grow">Nome de exibição<input name="display_name" value="{{ s.display_name if s else '' }}" placeholder="Netezza produção"></label>
     </div>
+    <p><span class="muted">URL de conexão</span><br>
+      {% if conn_url and conn_url.url %}<code>{{ conn_url.url }}</code>
+      {% else %}<span class="badge s-failed">host não definido</span>{% endif %}</p>
+    <p class="hint">Host e porta ficam no secret scope <code>{{ secret_scope }}</code> e não são editáveis no app. Para definir ou trocar:<br>
+      <code>databricks secrets put-secret {{ secret_scope }} {{ s.source_id if s else '&lt;identificador&gt;' }}-host</code><br>
+      <code>databricks secrets put-secret {{ secret_scope }} {{ s.source_id if s else '&lt;identificador&gt;' }}-port</code> (opcional, padrão 5480)</p>
     <div class="row">
-      <label class="grow">Host<input name="host" value="{{ s.host or '' if s else '' }}" placeholder="netezza.sicoob.local"></label>
-      <label>Porta<input type="number" name="port" value="{{ s.port if s else 5480 }}" min="1" max="65535" style="width:7em"></label>
       <label>Banco da sessão<input name="database" value="{{ s.database or '' if s else '' }}" placeholder="SYSTEM"></label>
     </div>
     <div class="row">

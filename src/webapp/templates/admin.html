@@ -24,7 +24,7 @@
     <tbody>{% for s in sources %}
       {% set lt = last_tests.get(s.source_id) %}
       <tr><td><a href="{{ url_for('admin_source_form', source_id=s.source_id) }}"><b>{{ s.display_name }}</b></a><br><small class="muted">{{ s.source_id }}</small></td>
-        <td><small>{{ s.host or '—' }}{% if s.host %}:{{ s.port }}{% endif %}<br>banco {{ s.database or '—' }}</small></td>
+        <td>{% set u = urls.get(s.source_id) %}{% if u and u.url %}<small><code>{{ u.url }}</code></small>{% else %}<span class="badge s-failed">host não definido</span>{% endif %}</td>
         <td>{% if s.credentials_set_at %}<small>definidas em {{ s.credentials_set_at|dt }}</small>{% else %}<span class="badge s-failed">não definidas</span>{% endif %}</td>
         <td><small>p_banco <code>{{ s.default_source_database or '—' }}</code><br>ext. <code>{{ s.default_ext_database or '—' }}.{{ s.default_ext_schema or '—' }}</code></small></td>
         <td>{{ s.max_sessions }}</td>

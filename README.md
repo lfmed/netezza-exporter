@@ -103,7 +103,8 @@ Desenvolvimento:
 ## Configurar o Netezza
 
 1. Em **🔌 Conexão Netezza**, informe:
-   - host, porta (5480), banco da sessão, TLS, timeout e limite global de sessões;
+   - banco da sessão, TLS, timeout e limite global de sessões. **Host e porta** ficam só no secret scope
+     (chaves `<id>-host` e `<id>-port`, padrão 5480). A tela mostra a URL de conexão, sem editar;
    - **usuário e senha**, que são gravados no secret scope `nzexport-netezza` e nunca no banco do app;
    - os **padrões** de `p_banco`, `p_banco_ext_table` e `p_esquema_ext_table`.
 2. Clique em **Testar conexão**. O teste roda como Job serverless, pela mesma rede (NCC) do dispatcher, e:
