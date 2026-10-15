@@ -715,8 +715,16 @@ def create_app() -> Flask:
 
     @app.get("/api/health")
     def healthz():
-        services.db().one("SELECT 1 AS ok")
-        return {"ok": True, "version": APP_VERSION}
+        """Saúde do app. Em falha, responde 503 com o motivo (para diagnosticar o deploy sem abrir o log)."""
+        faltam = [v for v in ("LAKEBASE_ENDPOINT", "NETEZZA_SECRET_SCOPE", "DISPATCHER_JOB_ID", "CONN_TEST_JOB_ID",
+                              "IMPORTER_JOB_ID") if not os.environ.get(v)]
+        try:
+            services.db().one("SELECT 1 AS ok")
+        except Exception as e:  # noqa: BLE001
+            log.exception("health: falha ao acessar o banco do app")
+            return jsonify(ok=False, version=APP_VERSION, error=f"{type(e).__name__}: {str(e)[:500]}",
+                           missing_env=faltam), 503
+        return {"ok": True, "version": APP_VERSION, **({"missing_env": faltam} if faltam else {})}
 
     if not app.testing and os.environ.get("DISABLE_SCHEDULER") != "1":
         services.start_scheduler()

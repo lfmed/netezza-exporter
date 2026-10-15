@@ -76,6 +76,26 @@ O relatório aparece no log do job e em **Administração → Último pós-deplo
 
 > O projeto Lakebase tem `prevent_destroy`: um `bundle destroy` não apaga a migração. O secret scope fica fora do bundle.
 
+### App não sobe (`app exited unexpectedly`)
+
+Compare o log de início do app (**Logs**, filtro **Source**: `BUILD` e `APP`) com o esperado:
+
+| Linha | Esperado | Problema |
+|---|---|---|
+| `Starting app with command:` | `[gunicorn app:app -w 2 --threads 8 -b 0.0.0.0:8000 --timeout 120]` | `[python app.py]` = a configuração do bundle (comando e variáveis) **não foi aplicada** |
+| `variáveis do bundle:` (v1.014+) | todas `ok` | alguma `AUSENTE` |
+
+- Publique **sempre** com `databricks bundle deploy -t <alvo>` e depois `databricks bundle run nzexport_app -t <alvo>`.
+  O botão **Deploy** da tela e o `databricks apps deploy` publicam só o código, sem o comando e as variáveis do
+  bundle. Use a CLI ≥ 1.18.
+- Desde a v1.014, com `python app.py` o app sobe mesmo assim (o mesmo gunicorn) e registra no log as variáveis
+  ausentes, mas sem `LAKEBASE_ENDPOINT` e os IDs dos jobs ele não funciona: corrija a publicação.
+- Para mais detalhes:
+  - `GET /api/health` responde `503` com o erro (ex.: do Lakebase) e `missing_env` com as variáveis ausentes;
+  - a variável de ambiente `NZEXPORT_LOG_LEVEL=DEBUG` no app aumenta o log (padrão `INFO`);
+  - `databricks apps get <app> -o json` mostra, em `active_deployment`, o `command` e as `env_vars` usados;
+  - **Environment** e **Deployments** na tela do app mostram as variáveis e a origem do código.
+
 ## 4. Servidor e credenciais do Netezza (valor nunca no Git)
 
 Host, porta, usuário e senha ficam só no secret scope, que já existe no ambiente. O app **só lê** o scope: mostra a URL

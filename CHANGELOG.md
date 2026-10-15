@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.014 — 2026-10-15
+- App resistente à publicação sem a configuração do bundle: com o comando padrão 'python app.py' (que fazia o app sair com 'app exited unexpectedly'), app.py sobe o mesmo gunicorn na porta do Databricks Apps; log de início em stdout com versão, comando e variáveis do bundle (ok/AUSENTE) e a orientação de publicar com bundle deploy + bundle run; nível do log em NZEXPORT_LOG_LEVEL; /api/health responde 503 com o erro e missing_env; DEPLOY.md com o roteiro de diagnóstico.
+
 ## 1.013 — 2026-10-15
 - Falha ao conectar no Lakebase com a causa real: o PoolTimeout passa a trazer o último erro do Postgres (host, usuário e mensagem); o pós-deploy para na falha de banco, sem seguir para as conferências que mascaravam o erro, e diz quem resolve (role da identidade dos jobs com o comando create-role, dono do schema ou rede); DEPLOY.md explica a identidade dos jobs no Lakebase.
 

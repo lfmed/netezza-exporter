@@ -54,6 +54,8 @@ databricks bundle run nzexport_pos_deploy -t dev --profile fe-vm-stable-classic-
 databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
 ```
 - Não existe `src/app.yaml`: a configuração do app fica em `databricks.yml` (`config.command`/`env` + `value_from`).
+  Se o app subir com `python app.py` (publicado sem o bundle), `app.py` sobe o mesmo gunicorn e loga as variáveis
+  ausentes (v1.014). Log em stdout, nível `NZEXPORT_LOG_LEVEL`.
 - Política de serverless do app: variável `serverless_policy_id` → `budget_policy_id` do app (vazia = padrão do
   workspace, hoje `79898ab9-344d-47f6-a180-de5a332ef681`); placeholders em hml/prd (v1.009).
 - O projeto Lakebase é recurso do bundle com `prevent_destroy`; em dev foi vinculado
@@ -131,4 +133,5 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
 navegador · 1.003 landing e formato do arquivo · 1.004 job importador · 1.005 deploy repetível (targets, pós-deploy,
 secret scope) · 1.006 vazão (reg/s) por subbloco, tabela e histórica · 1.007 host/porta no secret scope · 1.008 app só
 lê o scope · 1.009 política de serverless do app · 1.010 tipo de filtro (Data, Número, Sem filtro) · 1.011 `lakebase_endpoint` aceita o host · 1.012 nome do
-secret scope só pela configuração do deploy · 1.013 erro real do Lakebase no lugar do `PoolTimeout`.
+secret scope só pela configuração do deploy · 1.013 erro real do Lakebase no lugar do `PoolTimeout` · 1.014 app sobe e se diagnostica com
+`python app.py` (config do bundle não aplicada); health 503 com o motivo.
