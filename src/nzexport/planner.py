@@ -1,4 +1,8 @@
-"""Geração de subblocos a partir do período total (datas inclusivas)."""
+"""Geração de subblocos a partir da faixa total (inclusiva).
+
+Data: cortes de calendário (dia, semana, mês, ano). Número: a faixa dividida numa quantidade de subblocos.
+As funções de intervalo (subtract_ranges, merge_contiguous) servem para datas e para inteiros.
+"""
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -9,12 +13,13 @@ MAX_SUBBLOCKS_PER_TABLE = 5000
 @dataclass(frozen=True)
 class Subblock:
     seq: int
-    start: date          # data_ini enviada à procedure
-    end: date            # data_fim enviada à procedure (inclusiva)
+    start: date | int    # início enviado à procedure (data ou número)
+    end: date | int      # fim enviado à procedure (inclusivo)
 
-    @property
-    def upper_exclusive(self) -> date:
-        return self.end + timedelta(days=1)
+
+def _one(v):
+    """Passo unitário do tipo: um dia para datas, 1 para inteiros."""
+    return timedelta(days=1) if isinstance(v, date) else 1
 
 
 def _add_months(d: date, n: int) -> date:
@@ -87,16 +92,48 @@ def plan(period_start: date, period_end: date, unit: str, size: int,
     return blocks
 
 
-def subtract_ranges(start: date, end: date, excluded: list[tuple[date, date]]) -> list[tuple[date, date]]:
-    """Retorna as partes de [start, end] (inclusivo) que não estão em nenhum intervalo excluído (inclusivos)."""
+def plan_count(lo: int, hi: int, count: int) -> list[Subblock]:
+    """Divide a faixa inteira [lo, hi] (inclusiva) em `count` subblocos contíguos de tamanho igual.
+
+    Passo = teto(tamanho / count); o último subbloco é truncado em hi. Com count maior que a faixa,
+    sai um subbloco por valor.
+    """
+    if count < 1:
+        raise ValueError("a quantidade de subblocos deve ser >= 1")
+    if lo > hi:
+        raise ValueError("valor inicial maior que o valor final")
+    step = -(-(hi - lo + 1) // count)
+    if -(-(hi - lo + 1) // step) > MAX_SUBBLOCKS_PER_TABLE:
+        raise ValueError(f"mais de {MAX_SUBBLOCKS_PER_TABLE} subblocos; diminua a quantidade")
+    return [Subblock(seq=i + 1, start=a, end=min(a + step - 1, hi)) for i, a in enumerate(range(lo, hi + 1, step))]
+
+
+def plan_count_pieces(lo: int, hi: int, count: int, pieces: list[tuple[int, int]]) -> list[Subblock]:
+    """Cortes da faixa pedida inteira, recortados aos pedaços que ainda faltam (as faixas já executadas
+    saem sem deslocar os cortes)."""
+    blocks: list[Subblock] = []
+    for b in plan_count(lo, hi, count):
+        for p_lo, p_hi in pieces:
+            a, z = max(b.start, p_lo), min(b.end, p_hi)
+            if a <= z:
+                blocks.append(Subblock(seq=len(blocks) + 1, start=a, end=z))
+    if len(blocks) > MAX_SUBBLOCKS_PER_TABLE:
+        raise ValueError(f"mais de {MAX_SUBBLOCKS_PER_TABLE} subblocos; diminua a quantidade")
+    return blocks
+
+
+def subtract_ranges(start, end, excluded: list[tuple]) -> list[tuple]:
+    """Retorna as partes de [start, end] (inclusivo) que não estão em nenhum intervalo excluído (inclusivos).
+    Serve para datas e para inteiros."""
+    one = _one(start)
     pieces = []
     cursor = start
     for ex_start, ex_end in sorted(excluded):
         if ex_end < cursor or ex_start > end:
             continue
         if ex_start > cursor:
-            pieces.append((cursor, ex_start - timedelta(days=1)))
-        cursor = max(cursor, ex_end + timedelta(days=1))
+            pieces.append((cursor, ex_start - one))
+        cursor = max(cursor, ex_end + one)
         if cursor > end:
             break
     if cursor <= end:
@@ -116,10 +153,10 @@ def plan_pieces(pieces: list[tuple[date, date]], unit: str, size: int,
     return blocks
 
 
-def merge_contiguous(ranges: list[tuple[date, date]]) -> list[tuple[date, date]]:
-    out: list[list[date]] = []
+def merge_contiguous(ranges: list[tuple]) -> list[tuple]:
+    out: list[list] = []
     for s, e in sorted(ranges):
-        if out and s <= out[-1][1] + timedelta(days=1):
+        if out and s <= out[-1][1] + _one(s):
             out[-1][1] = max(out[-1][1], e)
         else:
             out.append([s, e])

@@ -19,7 +19,7 @@ from databricks.sdk import WorkspaceClient
 from .db import Database
 from .procedure import (CallSpec, ConfigError, ConnectError, OutcomeUnknown, ProcedureError, build_call,
                         build_client)
-from . import lifecycle
+from . import faixa, lifecycle
 from .repo import log_event
 
 log = logging.getLogger("nzexport.dispatcher")
@@ -40,8 +40,8 @@ class Work:
     attempt_no: int
     attempt_id: str
     spec: CallSpec
-    data_ini: date
-    data_fim: date
+    data_ini: date | int     # valores nativos do tipo de filtro (faixa.py)
+    data_fim: date | int
     max_retries: int
     retry_unknown: bool
     file_name: str | None = None     # .dat que a procedure gera (None = sem importação)
@@ -159,7 +159,7 @@ class Dispatcher:
 
             candidates = conn.execute("""
                 SELECT s.subblock_id, s.request_id, s.request_table_id, s.table_config_id, s.attempts,
-                       lower(s.data_range) AS data_ini, upper(s.data_range) - 1 AS data_fim,
+                       lower(s.key_range) AS key_lo, upper(s.key_range) - 1 AS key_hi, v.filter_type,
                        r.max_parallel AS req_max, tc.source_id, v.max_parallel AS tbl_max,
                        v.call_profile, v.procedure_name, v.source_database, v.source_table, v.ext_database,
                        v.ext_schema, v.time_column, v.date_format, v.dest_catalog, v.dest_schema, v.dest_table,
@@ -175,8 +175,9 @@ class Dispatcher:
                   AND (r.scheduled_start_at IS NULL OR r.scheduled_start_at <= now())
                   AND (r.deadline_at IS NULL OR r.deadline_at > now())
                   AND tc.active
-                -- pedidos em ordem de chegada; dentro de cada tabela, do período mais recente para o mais antigo
-                ORDER BY r.submitted_at, rt.ordinal, lower(s.data_range) DESC
+                -- pedidos em ordem de chegada; dentro de cada tabela, do período mais recente (Data) ou do
+                -- maior valor (Número) para o menor
+                ORDER BY r.submitted_at, rt.ordinal, lower(s.key_range) DESC
                 LIMIT 2000
                 FOR UPDATE OF s SKIP LOCKED""").fetchall()
 
@@ -197,6 +198,8 @@ class Dispatcher:
             works = []
             for c in picked:
                 attempt_no = c["attempts"] + 1
+                c["data_ini"] = faixa.from_key(c["filter_type"], c["key_lo"])
+                c["data_fim"] = faixa.from_key(c["filter_type"], c["key_hi"])
                 try:
                     spec = build_call(c, sources[c["source_id"]], c["data_ini"], c["data_fim"])
                     config_error = None

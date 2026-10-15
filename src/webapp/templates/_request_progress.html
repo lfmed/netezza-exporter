@@ -1,4 +1,4 @@
-{% from "_macros.html" import badge, progress %}
+{% from "_macros.html" import badge, progress, request_subblock %}
 <div class="card">
   <div class="split">
     <h2>Progresso</h2>
@@ -17,12 +17,12 @@
       <th title="média ponderada: soma das linhas / soma dos segundos dos subblocos medidos">Netezza reg/s</th><th>Delta reg/s</th><th>Linhas</th></tr></thead>
     <tbody>{% for t in tables %}
       <tr><td>{{ t.ordinal }}</td><td><b>{{ t.table_config_id }}</b> <small class="muted">v{{ t.config_version }}</small>{% if t.is_reprocess %} <span class="badge s-stopping">reproc.</span>{% endif %}</td>
-        <td class="nowrap">{{ t.period_start|dt }} → {{ t.period_end|dt }}
-          {% if t.excluded_ranges %}<details><summary><small>{{ t.excluded_ranges|sum(attribute='days') }} dia(s) excluídos (já executados)</small></summary>
+        <td class="nowrap">{{ fx_range(t.filter_type, t.data_ini, t.data_fim) }}
+          {% if t.excluded_ranges %}<details><summary><small>{{ t.excluded_ranges|sum(attribute='units')|num }} {{ UNIT_NAME[t.filter_type] }} excluídos (já executados)</small></summary>
             {% for x in t.excluded_ranges %}<small class="muted">{{ x.data_ini }} → {{ x.data_fim }} · {{ STATUS_LABEL.get(x.status, x.status) }} ·
               {% if x.request_id %}<a href="{{ url_for('request_detail', request_id=x.request_id) }}">{{ x.request_name }}</a>{% else %}{{ x.request_name }}{% endif %}</small><br>{% endfor %}
           </details>{% endif %}</td>
-        <td>{{ t.subblock_size }} {{ UNIT_LABEL[t.subblock_unit] }}</td>
+        <td>{{ request_subblock(t) }}</td>
         <td style="min-width:200px">{{ progress(t.done, t.total - t.canceled + t.import_failed, t.failed + t.unknown + t.import_failed, t.running + t.exported + t.importing) }}</td>
         <td>{{ t.running }}</td><td>{{ t.pending }}</td><td>{{ t.failed }}</td><td>{{ t.unknown }}</td>
         {% set tt = throughput.get(t.request_table_id) %}
@@ -45,10 +45,10 @@
     </form>
   </div>
   <table class="grid compact">
-    <thead><tr><th>Tabela</th><th>#</th><th>data_ini</th><th>data_fim</th><th>Status</th><th>Tent.</th><th>Linhas</th><th title="linhas / duração da chamada da SP">Netezza reg/s</th><th title="linhas / duração da importação">Delta reg/s</th><th>Início</th><th>Duração</th><th>Próx. tentativa</th><th>Erro</th><th></th></tr></thead>
+    <thead><tr><th>Tabela</th><th>#</th><th>Início</th><th>Fim</th><th>Status</th><th>Tent.</th><th>Linhas</th><th title="linhas / duração da chamada da SP">Netezza reg/s</th><th title="linhas / duração da importação">Delta reg/s</th><th>Início</th><th>Duração</th><th>Próx. tentativa</th><th>Erro</th><th></th></tr></thead>
     <tbody>{% for s in subblocks %}
       <tr class="{{ 'hl' if s.status == 'RUNNING' }}">
-        <td>{{ s.table_config_id }}</td><td>{{ s.seq }}</td><td class="nowrap">{{ s.data_ini }}</td><td class="nowrap">{{ s.data_fim }}</td>
+        <td>{{ s.table_config_id }}</td><td>{{ s.seq }}</td><td class="nowrap">{{ fx_value(s.filter_type, s.data_ini) }}</td><td class="nowrap">{{ fx_value(s.filter_type, s.data_fim) if s.filter_type != 'NONE' else '' }}</td>
         <td>{{ badge(s.status) }}</td><td>{{ s.attempts }}{% if s.import_attempts %}<small class="muted"> · imp. {{ s.import_attempts }}</small>{% endif %}</td>
         <td><small>{{ s.rows_loaded|num }}</small></td>
         <td class="nowrap" title="SP: {{ s.export_s|secs }}"><small>{{ s.export_rows_s|num }}</small></td>

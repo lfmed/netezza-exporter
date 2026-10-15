@@ -188,6 +188,20 @@ def conferir_externos(w, db, rel, eu, scope):
             if fmt.upper() != "DELTA":
                 rel.add(AVISO, f"destino {t['table_config_id']}", f"{full} não é Delta ({fmt})", "dono da tabela")
                 continue
+            # coluna do filtro: usada para limpar o período no destino (Data/Número); Sem filtro limpa a tabela toda
+            ft, col = t.get("filter_type") or "DATE", (t.get("time_column") or "").lower()
+            if ft != "NONE" and col:
+                c = next((x for x in info.columns or [] if (x.name or "").lower() == col), None)
+                tipo = (c.type_text or "").lower().replace(" ", "") if c else ""
+                inteira = tipo in ("tinyint", "smallint", "int", "integer", "bigint") or (
+                    tipo.startswith("decimal(") and tipo.endswith(",0)"))
+                if c is None:
+                    rel.add(AVISO, f"coluna do filtro {t['table_config_id']}", f"{col.upper()} não existe em {full}",
+                            "app (cadastro da tabela) / dono da tabela")
+                elif ft == "NUMBER" and not inteira:
+                    rel.add(AVISO, f"coluna do filtro {t['table_config_id']}",
+                            f"{col.upper()} em {full} é {c.type_text}: o filtro numérico exige coluna inteira",
+                            "app (cadastro da tabela) / dono da tabela")
             dono = info.owner == eu["principal"] or info.owner == eu["nome"]
             privs = set()
             if not dono:

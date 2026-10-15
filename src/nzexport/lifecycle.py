@@ -1,6 +1,7 @@
 """Fechamento de pedidos e hooks pós-exportação: usados pelo dispatcher e pelo importador."""
 from databricks.sdk import WorkspaceClient
 
+from . import faixa
 from .db import Database
 from .repo import log_event
 
@@ -51,25 +52,33 @@ def finalize_requests(db: Database):
                           {"done": r["done"], "bad": r["bad"], "pending": r["pending"], "reason": reason})
 
 
+def _hook_range(d) -> dict:
+    """data_ini/data_fim do hook: AAAA-MM-DD (Data), o número (Número) ou vazio (Sem filtro / nível pedido)."""
+    ft = d.get("filter_type")
+    if ft not in ("DATE", "NUMBER"):
+        return {"data_ini": "", "data_fim": ""}
+    return {"data_ini": str(faixa.from_key(ft, d["key_lo"])), "data_fim": str(faixa.from_key(ft, d["key_hi"]))}
+
+
 def fire_hooks(db: Database, w: WorkspaceClient | None):
     if w is None:
         return
     due = db.query("""
         WITH rt_done AS (
-          SELECT p.request_id, p.request_table_id, p.table_config_id, p.period_start, p.period_end,
+          SELECT p.request_id, p.request_table_id, p.table_config_id, p.filter_type, p.key_lo, p.key_hi,
                  p.last_finished_at
           FROM v_request_table_progress p
           -- só dispara com a tabela inteira concluída (subbloco cancelado = período não exportado)
           WHERE p.total > p.canceled AND p.done = p.total - p.canceled AND p.canceled_only = 0
             AND p.import_failed = 0)
         SELECT h.hook_id, h.job_id, h.trigger_level, d.request_id, d.request_table_id, d.table_config_id,
-               d.period_start, d.period_end
+               d.filter_type, d.key_lo, d.key_hi
         FROM post_export_hook h JOIN rt_done d
           ON h.trigger_level = 'REQUEST_TABLE' AND (h.table_config_id IS NULL OR h.table_config_id = d.table_config_id)
         -- só cargas concluídas depois da criação do hook (não dispara retroativamente)
         WHERE h.enabled AND d.last_finished_at >= h.created_at
         UNION ALL
-        SELECT h.hook_id, h.job_id, h.trigger_level, r.request_id, NULL, NULL, NULL, NULL
+        SELECT h.hook_id, h.job_id, h.trigger_level, r.request_id, NULL, NULL, NULL, NULL, NULL
         FROM post_export_hook h JOIN export_request r ON r.status = 'COMPLETED'
         WHERE h.enabled AND h.trigger_level = 'REQUEST' AND r.finished_at >= h.created_at
           AND (h.table_config_id IS NULL OR EXISTS (SELECT 1 FROM export_request_table rt
@@ -86,7 +95,7 @@ def fire_hooks(db: Database, w: WorkspaceClient | None):
         params = {"request_id": str(d["request_id"]), "trigger_level": d["trigger_level"],
                   "request_table_id": str(d["request_table_id"] or ""),
                   "table_config_id": d["table_config_id"] or "",
-                  "data_ini": str(d["period_start"] or ""), "data_fim": str(d["period_end"] or "")}
+                  **_hook_range(d)}
         try:
             run = w.jobs.run_now(job_id=d["job_id"], job_parameters=params)
             with db.tx() as conn:

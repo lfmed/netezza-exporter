@@ -97,6 +97,20 @@ ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS migration_end date;
 ALTER TABLE table_config_version DROP COLUMN IF EXISTS expected_periodicity_unit;
 ALTER TABLE table_config_version DROP COLUMN IF EXISTS expected_periodicity_size;
 ALTER TABLE table_config_version DROP COLUMN IF EXISTS periodicity_tolerance_days;
+-- Tipo de filtro: DATE (coluna de data, AAAAMMDD), NUMBER (coluna inteira, faixa mínimo-máximo dividida numa
+-- quantidade de subblocos) ou NONE (sem filtro: a tabela inteira numa única chamada)
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS filter_type text NOT NULL DEFAULT 'DATE';
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS scope_num_min bigint;     -- escopo do filtro numérico
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS scope_num_max bigint;
+ALTER TABLE table_config_version ADD COLUMN IF NOT EXISTS default_subblock_count int NOT NULL DEFAULT 10;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'table_config_version_filter_chk') THEN
+    ALTER TABLE table_config_version ADD CONSTRAINT table_config_version_filter_chk CHECK (
+      filter_type IN ('DATE','NUMBER','NONE')
+      AND (scope_num_min IS NULL OR scope_num_max IS NULL OR scope_num_min <= scope_num_max)
+      AND default_subblock_count BETWEEN 1 AND 5000);
+  END IF;
+END $$;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'table_config_version_scope_chk') THEN
     ALTER TABLE table_config_version ADD CONSTRAINT table_config_version_scope_chk
@@ -143,16 +157,34 @@ CREATE TABLE IF NOT EXISTS export_request_table (
   FOREIGN KEY (table_config_id, config_version) REFERENCES table_config_version
 );
 ALTER TABLE export_request_table ADD COLUMN IF NOT EXISTS excluded_ranges jsonb;
+-- Faixa pedida na chave genérica (faixa.py): dias desde 1970-01-01 (Data), o valor (Número) ou 0 (Sem filtro).
+-- period_start/period_end ficam só nos pedidos por data (exibição e hooks).
+ALTER TABLE export_request_table ADD COLUMN IF NOT EXISTS key_lo bigint;
+ALTER TABLE export_request_table ADD COLUMN IF NOT EXISTS key_hi bigint;
+UPDATE export_request_table SET key_lo = period_start - DATE '1970-01-01', key_hi = period_end - DATE '1970-01-01'
+ WHERE key_lo IS NULL;
+ALTER TABLE export_request_table ALTER COLUMN key_lo SET NOT NULL;
+ALTER TABLE export_request_table ALTER COLUMN key_hi SET NOT NULL;
+ALTER TABLE export_request_table ALTER COLUMN period_start DROP NOT NULL;
+ALTER TABLE export_request_table ALTER COLUMN period_end DROP NOT NULL;
+-- COUNT = faixa numérica dividida em subblock_size subblocos; WHOLE = tabela inteira (sem filtro)
+ALTER TABLE export_request_table DROP CONSTRAINT IF EXISTS export_request_table_subblock_unit_check;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'export_request_table_unit_chk') THEN
+    ALTER TABLE export_request_table ADD CONSTRAINT export_request_table_unit_chk
+      CHECK (subblock_unit IN ('DAY','WEEK','MONTH','YEAR','COUNT','WHOLE') AND key_lo <= key_hi);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS export_request_table_req_idx ON export_request_table (request_id);
 
--- Subbloco = 1 chamada da procedure (tabela, data_ini, data_fim inclusiva)
+-- Subbloco = 1 chamada da procedure (tabela, ini, fim inclusivo)
 CREATE TABLE IF NOT EXISTS export_subblock (
   subblock_id      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   request_table_id uuid NOT NULL REFERENCES export_request_table ON DELETE CASCADE,
   request_id       uuid NOT NULL,
   table_config_id  text NOT NULL,
   seq              int  NOT NULL,
-  data_range       daterange NOT NULL,   -- semiaberto [ini, fim+1)
+  key_range        int8range NOT NULL,   -- chave genérica (faixa.py), semiaberta [ini, fim+1)
   status           text NOT NULL CHECK (status IN
                    ('PENDING','RUNNING','EXPORTED','IMPORTING','DONE','FAILED','IMPORT_FAILED','UNKNOWN',
                     'CANCELED','SUPERSEDED')),
@@ -185,16 +217,29 @@ ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS delta_version bigint;
 ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS exported_at timestamptz;
 ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS loaded_at timestamptz;
 
+-- Faixa genérica (v1.010): data_range (daterange) vira key_range (int8range de dias desde 1970-01-01).
+-- As views que usam a coluna são recriadas mais abaixo.
+ALTER TABLE export_subblock ADD COLUMN IF NOT EXISTS key_range int8range;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'nzexport'
+             AND table_name = 'export_subblock' AND column_name = 'data_range') THEN
+    DROP VIEW IF EXISTS v_migration_coverage;
+    DROP VIEW IF EXISTS v_request_table_progress;
+    UPDATE export_subblock SET key_range = int8range(lower(data_range) - DATE '1970-01-01',
+                                                     upper(data_range) - DATE '1970-01-01')
+     WHERE key_range IS NULL;
+    ALTER TABLE export_subblock DROP CONSTRAINT IF EXISTS export_subblock_no_overlap;
+    ALTER TABLE export_subblock DROP COLUMN data_range;
+  END IF;
+END $$;
+ALTER TABLE export_subblock ALTER COLUMN key_range SET NOT NULL;
+
 -- Bloqueio de duplicidade no banco: dois subblocos vivos da mesma tabela não podem se sobrepor.
 -- FAILED reserva o período até o usuário repetir ou cancelar; CANCELED e IMPORT_FAILED liberam para novo pedido.
 DO $$ BEGIN
-  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'export_subblock_no_overlap'
-             AND pg_get_constraintdef(oid) NOT LIKE '%EXPORTED%') THEN
-    ALTER TABLE export_subblock DROP CONSTRAINT export_subblock_no_overlap;
-  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'export_subblock_no_overlap') THEN
     ALTER TABLE export_subblock ADD CONSTRAINT export_subblock_no_overlap
-      EXCLUDE USING gist (table_config_id WITH =, data_range WITH &&)
+      EXCLUDE USING gist (table_config_id WITH =, key_range WITH &&)
       WHERE (status IN ('PENDING','RUNNING','EXPORTED','IMPORTING','DONE','UNKNOWN','FAILED'));
   END IF;
 END $$;
@@ -332,7 +377,8 @@ LEFT JOIN LATERAL (SELECT started_at, finished_at, rows_inserted, file_size FROM
 DROP VIEW IF EXISTS v_request_table_progress;
 CREATE VIEW v_request_table_progress AS
 SELECT rt.request_id, rt.request_table_id, rt.ordinal, rt.table_config_id, rt.config_version,
-       rt.period_start, rt.period_end, rt.subblock_unit, rt.subblock_size, rt.is_reprocess, rt.excluded_ranges,
+       rt.period_start, rt.period_end, rt.key_lo, rt.key_hi, v.filter_type,
+       rt.subblock_unit, rt.subblock_size, rt.is_reprocess, rt.excluded_ranges,
        count(s.*)                                         AS total,
        count(*) FILTER (WHERE s.status = 'DONE')          AS done,
        count(*) FILTER (WHERE s.status = 'RUNNING')       AS running,
@@ -346,41 +392,49 @@ SELECT rt.request_id, rt.request_table_id, rt.ordinal, rt.table_config_id, rt.co
        count(*) FILTER (WHERE s.status = 'CANCELED')      AS canceled_only,
        min(s.started_at) AS started_at, max(s.finished_at) AS last_finished_at
 FROM export_request_table rt
+JOIN table_config_version v ON v.table_config_id = rt.table_config_id AND v.config_version = rt.config_version
 LEFT JOIN export_subblock s ON s.request_table_id = rt.request_table_id
-GROUP BY rt.request_table_id;
+GROUP BY rt.request_table_id, v.filter_type;
 
--- Dias contidos num multirange de datas
-CREATE OR REPLACE FUNCTION mr_days(m datemultirange) RETURNS int LANGUAGE sql IMMUTABLE AS $$
-  SELECT coalesce(sum(upper(r) - lower(r)), 0)::int FROM unnest(coalesce(m, '{}'::datemultirange)) r
+-- Unidades (dias, valores ou 1 tabela) contidas num multirange da chave genérica
+DROP VIEW IF EXISTS v_migration_coverage;
+DROP FUNCTION IF EXISTS mr_days(datemultirange);
+CREATE OR REPLACE FUNCTION mr_units(m int8multirange) RETURNS bigint LANGUAGE sql IMMUTABLE AS $$
+  SELECT coalesce(sum(upper(r) - lower(r)), 0)::bigint FROM unnest(coalesce(m, '{}'::int8multirange)) r
 $$;
 
--- Completude da migração por tabela: escopo x períodos concluídos, em execução e com problema
-DROP VIEW IF EXISTS v_migration_coverage;
+-- Completude da migração por tabela: escopo x faixas concluídas, em execução e com problema.
+-- Escopo: datas (Data), mínimo-máximo (Número) ou a tabela inteira [0, 1) (Sem filtro).
 CREATE VIEW v_migration_coverage AS
 WITH cur AS (
   SELECT tc.source_id, tc.active, v.*,
-         CASE WHEN v.migration_start IS NOT NULL AND v.migration_end IS NOT NULL
-              THEN datemultirange(daterange(v.migration_start, v.migration_end, '[]')) END AS scope
+         CASE v.filter_type
+           WHEN 'NONE' THEN int8multirange(int8range(0, 1))
+           WHEN 'NUMBER' THEN CASE WHEN v.scope_num_min IS NOT NULL AND v.scope_num_max IS NOT NULL
+                                   THEN int8multirange(int8range(v.scope_num_min, v.scope_num_max + 1)) END
+           ELSE CASE WHEN v.migration_start IS NOT NULL AND v.migration_end IS NOT NULL
+                     THEN int8multirange(int8range(v.migration_start - DATE '1970-01-01',
+                                                   v.migration_end - DATE '1970-01-01' + 1)) END
+         END AS scope
   FROM table_config tc
   JOIN table_config_version v ON v.table_config_id = tc.table_config_id AND v.config_version = tc.current_version
 ), mr AS (
   SELECT s.table_config_id,
-         range_agg(s.data_range) FILTER (WHERE s.status = 'DONE')                         AS done_mr,
-         range_agg(s.data_range) FILTER (WHERE s.status IN ('PENDING','RUNNING','EXPORTED','IMPORTING')) AS inflight_mr,
-         range_agg(s.data_range) FILTER (WHERE s.status = 'UNKNOWN')                       AS unknown_mr,
-         range_agg(s.data_range) FILTER (WHERE s.status IN ('PENDING','RUNNING','EXPORTED','IMPORTING','DONE','UNKNOWN')) AS live_mr,
-         range_agg(s.data_range) FILTER (WHERE s.status = 'FAILED')                        AS failed_mr,
+         range_agg(s.key_range) FILTER (WHERE s.status = 'DONE')                         AS done_mr,
+         range_agg(s.key_range) FILTER (WHERE s.status IN ('PENDING','RUNNING','EXPORTED','IMPORTING')) AS inflight_mr,
+         range_agg(s.key_range) FILTER (WHERE s.status = 'UNKNOWN')                       AS unknown_mr,
+         range_agg(s.key_range) FILTER (WHERE s.status IN ('PENDING','RUNNING','EXPORTED','IMPORTING','DONE','UNKNOWN')) AS live_mr,
+         range_agg(s.key_range) FILTER (WHERE s.status = 'FAILED')                        AS failed_mr,
          count(*) FILTER (WHERE s.status IN ('RUNNING','EXPORTED','IMPORTING'))  AS running,
          count(*) FILTER (WHERE s.status = 'PENDING')  AS pending,
          max(s.finished_at) FILTER (WHERE s.status = 'DONE') AS last_success_at
   FROM export_subblock s GROUP BY s.table_config_id
 ), x AS (
   SELECT c.table_config_id, c.source_id, c.active, c.source_table, c.procedure_name, c.config_version,
-         c.migration_start, c.migration_end, c.scope,
+         c.filter_type, c.migration_start, c.migration_end, c.scope_num_min, c.scope_num_max, c.scope,
          coalesce(m.done_mr, '{}')     AS done_mr,
          coalesce(m.inflight_mr, '{}') AS inflight_mr,
          coalesce(m.unknown_mr, '{}')  AS unknown_mr,
-         -- falhas ainda não cobertas por outro subbloco vivo
          coalesce(m.failed_mr, '{}') AS failed_open_mr,   -- falhas aguardando repetir ou cancelar
          -- lacunas: parte do escopo sem subbloco vivo nem falha pendente (nunca pedida ou cancelada)
          CASE WHEN c.scope IS NOT NULL THEN c.scope - coalesce(m.live_mr, '{}') - coalesce(m.failed_mr, '{}') END AS missing_mr,
@@ -389,26 +443,27 @@ WITH cur AS (
   FROM cur c LEFT JOIN mr m ON m.table_config_id = c.table_config_id
 )
 SELECT x.table_config_id, x.source_id, x.active, x.source_table, x.procedure_name, x.config_version,
-       x.migration_start, x.migration_end, x.running, x.pending, x.last_success_at,
-       mr_days(x.scope)                              AS scope_days,
-       mr_days(x.done_mr * coalesce(x.scope, x.done_mr)) AS done_days,
-       mr_days(x.inflight_mr * coalesce(x.scope, x.inflight_mr)) AS inflight_days,
-       mr_days(x.unknown_mr * coalesce(x.scope, x.unknown_mr))  AS unknown_days,
-       mr_days(x.failed_open_mr * coalesce(x.scope, x.failed_open_mr)) AS failed_days,
-       mr_days(x.missing_mr)                         AS missing_days,
-       mr_days(x.done_outside_mr)                    AS done_outside_days,
-       (SELECT count(*) FROM unnest(x.missing_mr))   AS gap_count,
+       x.filter_type, x.migration_start, x.migration_end, x.scope_num_min, x.scope_num_max,
+       x.running, x.pending, x.last_success_at,
+       mr_units(x.scope)                              AS scope_units,
+       mr_units(x.done_mr * coalesce(x.scope, x.done_mr)) AS done_units,
+       mr_units(x.inflight_mr * coalesce(x.scope, x.inflight_mr)) AS inflight_units,
+       mr_units(x.unknown_mr * coalesce(x.scope, x.unknown_mr))  AS unknown_units,
+       mr_units(x.failed_open_mr * coalesce(x.scope, x.failed_open_mr)) AS failed_units,
+       mr_units(x.missing_mr)                         AS missing_units,
+       mr_units(x.done_outside_mr)                    AS done_outside_units,
+       (SELECT count(*) FROM unnest(x.missing_mr))    AS gap_count,
        x.missing_mr::text AS missing_ranges,
        x.failed_open_mr::text AS failed_ranges,
        x.unknown_mr::text AS unknown_ranges,
        CASE
          WHEN NOT x.active THEN 'INATIVA'
          WHEN x.scope IS NULL THEN 'SEM_ESCOPO'
-         WHEN mr_days(x.unknown_mr * x.scope) > 0 THEN 'ESTADO_DESCONHECIDO'
-         WHEN mr_days(x.done_mr * x.scope) = mr_days(x.scope) THEN 'COMPLETA'
+         WHEN mr_units(x.unknown_mr * x.scope) > 0 THEN 'ESTADO_DESCONHECIDO'
+         WHEN mr_units(x.done_mr * x.scope) = mr_units(x.scope) THEN 'COMPLETA'
          WHEN x.running + x.pending > 0 THEN 'EM_ANDAMENTO'
-         WHEN mr_days(x.failed_open_mr * x.scope) > 0 THEN 'COM_FALHAS'
-         WHEN mr_days(x.done_mr * x.scope) = 0 THEN 'NAO_INICIADA'
+         WHEN mr_units(x.failed_open_mr * x.scope) > 0 THEN 'COM_FALHAS'
+         WHEN mr_units(x.done_mr * x.scope) = 0 THEN 'NAO_INICIADA'
          ELSE 'INCOMPLETA'
        END AS coverage_status
 FROM x;

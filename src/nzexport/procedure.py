@@ -5,6 +5,11 @@ Perfis de chamada (definidos no cadastro da tabela):
                                          p_dtini, p_dtfim, p_NomeColunaTempo)  -- datas AAAAMMDD, fim inclusivo
   * TABELA_INI_FIM:    procedure(tabela, data_ini, data_fim)
 
+Tipo de filtro da tabela (faixa.py), só no perfil SP_CARGA_EVENTUAL para Número e Sem filtro:
+  * Data:       p_dtini/p_dtfim em AAAAMMDD
+  * Número:     p_dtini/p_dtfim = valores inteiros mínimo e máximo (a SP concatena no BETWEEN)
+  * Sem filtro: p_NomeColunaTempo, p_dtini e p_dtfim = '1' -> WHERE 1 BETWEEN 1 AND 1 (a tabela toda)
+
 A procedure grava os arquivos por conta própria; o retorno sem exceção significa concluído.
 Todos os valores são validados (identificadores e datas) antes de montar o comando, porque o nzpy
 substitui parâmetros sem escapar e a procedure concatena os valores em SQL dinâmico.
@@ -14,9 +19,12 @@ import socket
 from dataclasses import dataclass, field
 from datetime import date
 
+from . import faixa
+
 _PROC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*){0,2}$")
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,127}$")
 _DOTTED = _PROC_NAME
+_INT = re.compile(r"^-?\d{1,19}$")
 
 DATE_FORMATS = {"YYYYMMDD": "%Y%m%d", "YYYY-MM-DD": "%Y-%m-%d"}
 
@@ -85,23 +93,39 @@ def _resolve(cfg: dict, source: dict | None) -> dict:
     }
 
 
-def build_call(cfg: dict, source: dict | None, data_ini: date, data_fim: date) -> CallSpec:
-    """Monta a chamada de um subbloco a partir do cadastro da tabela e da conexão. Levanta ConfigError."""
+def build_call(cfg: dict, source: dict | None, data_ini, data_fim) -> CallSpec:
+    """Monta a chamada de um subbloco a partir do cadastro da tabela e da conexão. Levanta ConfigError.
+
+    data_ini/data_fim são os valores nativos do tipo de filtro: date (Data), int (Número) ou 0 (Sem filtro).
+    """
     profile = cfg.get("call_profile") or DEFAULT_PROFILE
     if profile not in PROFILES:
         raise ConfigError(f"perfil de chamada desconhecido: {profile!r}")
+    try:
+        ft = faixa.ftype(cfg)
+    except ValueError as e:
+        raise ConfigError(str(e)) from None
+    if ft != "DATE" and profile != "SP_CARGA_EVENTUAL":
+        raise ConfigError(f"o tipo de filtro {faixa.FILTER_TYPES[ft]} só existe no perfil SP_CARGA_EVENTUAL")
     proc = (cfg.get("procedure_name") or PROFILES[profile]["default_procedure"]).strip()
     if not _PROC_NAME.match(proc):
         raise ConfigError(f"nome de procedure inválido: {proc!r}")
-    fmt = DATE_FORMATS.get(cfg.get("date_format") or "YYYYMMDD")
-    if not fmt:
-        raise ConfigError(f"formato de data inválido: {cfg.get('date_format')!r}")
     v = _resolve(cfg, source)
-    v["data_ini"], v["data_fim"] = data_ini.strftime(fmt), data_fim.strftime(fmt)
+    if ft == "DATE":
+        fmt = DATE_FORMATS.get(cfg.get("date_format") or "YYYYMMDD")
+        if not fmt:
+            raise ConfigError(f"formato de data inválido: {cfg.get('date_format')!r}")
+        v["data_ini"], v["data_fim"] = data_ini.strftime(fmt), data_fim.strftime(fmt)
+    elif ft == "NUMBER":
+        v["data_ini"], v["data_fim"] = str(int(data_ini)), str(int(data_fim))
+        if not (_INT.match(v["data_ini"]) and _INT.match(v["data_fim"])):
+            raise ConfigError(f"faixa numérica inválida: {v['data_ini']}..{v['data_fim']}")
+    else:  # sem filtro: filtro sempre verdadeiro, montado pelo app (não vem do cadastro)
+        v["time_column"] = v["data_ini"] = v["data_fim"] = faixa.ALWAYS_TRUE
 
     errors = []
     for key, pname in PROFILES[profile]["args"]:
-        if key in ("data_ini", "data_fim"):
+        if key in ("data_ini", "data_fim") or (ft == "NONE" and key == "time_column"):
             continue
         val = v[key]
         pattern = _DOTTED if (profile == "TABELA_INI_FIM" and key == "source_table") else _IDENT
@@ -141,8 +165,10 @@ def validate_destination(cfg: dict) -> list[str]:
 def validate_table_config(cfg: dict, source: dict | None) -> list[str]:
     """Erros de cadastro (para a tela e o CSV), usando um período de exemplo."""
     try:
-        build_call(cfg, source, date(2000, 1, 1), date(2000, 1, 31))
+        build_call(cfg, source, *faixa.example(faixa.ftype(cfg)))
         return []
+    except ValueError as e:  # tipo de filtro inválido
+        return [str(e)]
     except ConfigError as e:
         return str(e).split("; ")
 

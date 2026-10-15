@@ -48,9 +48,27 @@ def clean(form_values: dict) -> dict:
 _NOME = re.compile(r"[A-Za-z0-9_]+")
 
 
-def predicado_periodo(coluna: str, tipo: str, ini: str, fim: str) -> str:
-    """Filtro SQL do período do subbloco (ini/fim AAAAMMDD, inclusivos) conforme o tipo da coluna de tempo,
-    como no PLHDWA: DATE, texto ou numérico (AAAAMMDD); timestamp cobre o dia final inteiro."""
+_INTEIRO = re.compile(r"-?\d{1,19}")
+_TIPOS_INTEIROS = ("tinyint", "smallint", "int", "integer", "bigint")
+
+
+def predicado_periodo(coluna: str, tipo: str, ini: str, fim: str, filtro: str = "DATE") -> str:
+    """Filtro SQL do período do subbloco (ini/fim inclusivos) conforme o tipo de filtro e o tipo da coluna.
+
+    Data (ini/fim AAAAMMDD), como no PLHDWA: DATE, texto ou numérico; timestamp cobre o dia final inteiro.
+    Número (ini/fim inteiros): BETWEEN direto, exige coluna inteira (ou decimal sem casas) no destino.
+    Sem filtro: a tabela inteira (TRUE).
+    """
+    if filtro == "NONE":
+        return "TRUE"
+    if filtro == "NUMBER":
+        t = (tipo or "").lower().replace(" ", "")
+        inteira = t in _TIPOS_INTEIROS or re.fullmatch(r"decimal\(\d+,0\)", t)
+        if not (_NOME.fullmatch(coluna or "") and _INTEIRO.fullmatch(ini) and _INTEIRO.fullmatch(fim)):
+            raise ValueError(f"faixa/coluna inválidas: {coluna!r} {ini}..{fim}")
+        if not inteira:
+            raise ValueError(f"coluna {coluna} é {tipo}: o filtro numérico exige uma coluna inteira no destino")
+        return f"`{coluna}` BETWEEN {int(ini)} AND {int(fim)}"
     if not (_NOME.fullmatch(coluna or "") and re.fullmatch(r"\d{8}", ini) and re.fullmatch(r"\d{8}", fim)):
         raise ValueError(f"período/coluna inválidos: {coluna!r} {ini}..{fim}")
     c = f"`{coluna}`"

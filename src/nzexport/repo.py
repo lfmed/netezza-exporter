@@ -4,10 +4,10 @@ from dataclasses import dataclass, field
 from datetime import date
 
 import psycopg
-from psycopg.types.range import Range
 
+from . import faixa
 from .db import Database
-from .planner import merge_contiguous, plan_pieces, subtract_ranges
+from .planner import Subblock, merge_contiguous, plan_count_pieces, plan_pieces, subtract_ranges
 
 # Status que reservam o período da tabela. FAILED reserva até o usuário repetir ou cancelar;
 # CANCELED, SUPERSEDED e IMPORT_FAILED liberam o período para um novo pedido.
@@ -119,11 +119,12 @@ def get_table(db: Database, table_config_id: str):
 
 
 TABLE_VERSION_FIELDS = ("call_profile", "source_database", "source_table", "ext_database", "ext_schema",
-                        "time_column", "date_format", "procedure_name", "file_options",
+                        "filter_type", "time_column", "date_format", "procedure_name", "file_options",
                         "dest_catalog", "dest_schema", "dest_table",
                         "default_subblock_unit",
                         "default_subblock_size", "max_parallel", "call_timeout_min", "max_retries", "retry_unknown",
-                        "migration_start", "migration_end", "description")
+                        "migration_start", "migration_end", "scope_num_min", "scope_num_max",
+                        "default_subblock_count", "description")
 
 
 def save_table(db: Database, actor: str, table_config_id: str, source_id: str, active: bool, fields: dict):
@@ -142,6 +143,19 @@ def _save_table(conn, actor: str, table_config_id: str, source_id: str, active: 
                                ON v.table_config_id = tc.table_config_id AND v.config_version = tc.current_version
                                WHERE tc.table_config_id = %s""", (table_config_id,)).fetchone()
         fields = {**fields, "file_options": prev["file_options"] if prev else {}}
+    if cur is not None:
+        # o tipo de filtro define o significado das faixas já gravadas: não muda depois do primeiro subbloco
+        old = conn.execute("""SELECT v.filter_type FROM table_config tc JOIN table_config_version v
+                              ON v.table_config_id = tc.table_config_id AND v.config_version = tc.current_version
+                              WHERE tc.table_config_id = %s""", (table_config_id,)).fetchone()
+        new_ft = fields.get("filter_type") or faixa.DEFAULT_FILTER
+        if old and old["filter_type"] != new_ft and conn.execute(
+                "SELECT 1 FROM export_subblock WHERE table_config_id = %s LIMIT 1", (table_config_id,)).fetchone():
+            raise ValueError(f"{table_config_id}: o tipo de filtro não pode mudar ({faixa.FILTER_TYPES[old['filter_type']]} → "
+                             f"{faixa.FILTER_TYPES[new_ft]}) porque a tabela já tem subblocos; cadastre outro identificador")
+    # colunas NOT NULL com padrão no banco: quem não informa recebe o padrão (e não NULL explícito)
+    fields = {"filter_type": faixa.DEFAULT_FILTER, "default_subblock_count": 10} | \
+        {k: v for k, v in fields.items() if not (k in ("filter_type", "default_subblock_count") and v is None)}
     vals = [json.dumps(fields.get(f) or {}) if f == "file_options" else fields.get(f) for f in TABLE_VERSION_FIELDS]
     if cur is None:
         version = 1
@@ -195,14 +209,18 @@ def save_hook(db: Database, actor: str, hook_id: str, description: str, table_co
 
 @dataclass
 class TableRequest:
+    """Linha do pedido. period_start/period_end são os valores nativos do tipo de filtro (faixa.py):
+    date (Data), int (Número) ou 0 (Sem filtro). Número: subblock_unit = COUNT e subblock_size = quantidade;
+    Sem filtro: WHOLE."""
     table_config_id: str
-    period_start: date
-    period_end: date
+    period_start: date | int
+    period_end: date | int
     subblock_unit: str
     subblock_size: int
     calendar_aligned: bool = True
     is_reprocess: bool = False
     reprocess_reason: str | None = None
+    filter_type: str = faixa.DEFAULT_FILTER
     # preenchidos na revisão
     config_version: int | None = None
     pieces: list = field(default_factory=list)      # intervalos que serão executados
@@ -212,28 +230,40 @@ class TableRequest:
     superseded: list = field(default_factory=list)
 
     @property
-    def excluded_days(self) -> int:
-        return sum(e["days"] for e in self.excluded)
+    def excluded_units(self) -> int:
+        return sum(e["units"] for e in self.excluded)
 
 
 class NothingToRun(ValueError):
     pass
 
 
-def _daterange(start: date, end_inclusive: date) -> Range:
-    return Range(start, end_inclusive, bounds="[]")
+def _keys(ft: str, start, end) -> tuple[int, int]:
+    """Faixa nativa inclusiva -> (lo, hi) da chave genérica; no SQL: int8range(lo, hi, '[]')."""
+    return faixa.to_key(ft, start), faixa.to_key(ft, end)
 
 
-def find_overlaps(conn, table_config_id: str, start: date, end: date, statuses=LIVE) -> list[dict]:
-    return conn.execute("""
+def with_natives(rows: list[dict], ft_col: str = "filter_type") -> list[dict]:
+    """Acrescenta data_ini/data_fim (valores nativos) a linhas com key_lo/key_hi e o tipo de filtro."""
+    for r in rows:
+        ft = r.get(ft_col) or faixa.DEFAULT_FILTER
+        r["data_ini"], r["data_fim"] = faixa.from_key(ft, r["key_lo"]), faixa.from_key(ft, r["key_hi"])
+    return rows
+
+
+def find_overlaps(conn, table_config_id: str, ft: str, start, end, statuses=LIVE) -> list[dict]:
+    rows = conn.execute("""
         SELECT s.subblock_id, s.request_id, r.request_name, s.status,
-               lower(s.data_range) AS data_ini, upper(s.data_range) - 1 AS data_fim
+               lower(s.key_range) AS key_lo, upper(s.key_range) - 1 AS key_hi
         FROM export_subblock s JOIN export_request r USING (request_id)
-        WHERE s.table_config_id = %s AND s.data_range && %s AND s.status = ANY(%s)
-        ORDER BY lower(s.data_range)""", (table_config_id, _daterange(start, end), list(statuses))).fetchall()
+        WHERE s.table_config_id = %s AND s.key_range && int8range(%s, %s, '[]') AND s.status = ANY(%s)
+        ORDER BY lower(s.key_range)""", (table_config_id, *_keys(ft, start, end), list(statuses))).fetchall()
+    for r in rows:
+        r["filter_type"] = ft
+    return with_natives(rows)
 
 
-def _group_excluded(overlaps: list[dict], start: date, end: date) -> list[dict]:
+def _group_excluded(overlaps: list[dict], ft: str, start, end) -> list[dict]:
     """Agrupa subblocos sobrepostos por pedido/status em intervalos contíguos, recortados ao período pedido."""
     groups: dict[tuple, list] = {}
     for o in overlaps:
@@ -243,7 +273,7 @@ def _group_excluded(overlaps: list[dict], start: date, end: date) -> list[dict]:
     for (rid, name, status), ranges in groups.items():
         for a, b in merge_contiguous(ranges):
             out.append({"request_id": rid, "request_name": name, "status": status,
-                        "data_ini": a, "data_fim": b, "days": (b - a).days + 1})
+                        "data_ini": a, "data_fim": b, "units": faixa.units(ft, a, b)})
     return sorted(out, key=lambda e: e["data_ini"])
 
 
@@ -257,18 +287,25 @@ def review(db: Database, tables: list[TableRequest]) -> list[TableRequest]:
     with db.pool.connection() as conn:
         for i, t in enumerate(tables):
             t.pieces, t.blocks, t.excluded, t.conflicts, t.superseded = [], [], [], [], []
-            cfg = conn.execute("SELECT current_version, active FROM table_config WHERE table_config_id = %s",
-                               (t.table_config_id,)).fetchone()
+            cfg = conn.execute("""SELECT tc.current_version, tc.active, v.filter_type
+                                  FROM table_config tc JOIN table_config_version v
+                                    ON v.table_config_id = tc.table_config_id AND v.config_version = tc.current_version
+                                  WHERE tc.table_config_id = %s""", (t.table_config_id,)).fetchone()
             if not cfg or not cfg["active"]:
                 t.conflicts = [{"reason": "tabela não cadastrada ou inativa"}]
                 continue
             t.config_version = cfg["current_version"]
-            overlaps = find_overlaps(conn, t.table_config_id, t.period_start, t.period_end)
+            if t.filter_type != cfg["filter_type"]:
+                t.conflicts = [{"reason": f"o tipo de filtro da tabela é {faixa.FILTER_TYPES[cfg['filter_type']]}; "
+                                          "volte e preencha a linha de novo"}]
+                continue
+            ft = t.filter_type
+            overlaps = find_overlaps(conn, t.table_config_id, ft, t.period_start, t.period_end)
             if t.is_reprocess:
                 t.superseded = _group_excluded([o for o in overlaps if o["status"] == "DONE"],
-                                               t.period_start, t.period_end)
+                                               ft, t.period_start, t.period_end)
                 overlaps = [o for o in overlaps if o["status"] != "DONE"]
-            t.excluded = _group_excluded(overlaps, t.period_start, t.period_end)
+            t.excluded = _group_excluded(overlaps, ft, t.period_start, t.period_end)
             # linhas anteriores do mesmo pedido para a mesma tabela também ficam de fora
             for j, other in enumerate(tables[:i]):
                 if other.table_config_id != t.table_config_id:
@@ -278,11 +315,16 @@ def review(db: Database, tables: list[TableRequest]) -> list[TableRequest]:
                     if a <= b:
                         t.excluded.append({"request_id": None, "request_name": f"linha {j + 1} deste pedido",
                                            "status": "THIS_REQUEST", "data_ini": a, "data_fim": b,
-                                           "days": (b - a).days + 1})
+                                           "units": faixa.units(ft, a, b)})
             t.excluded.sort(key=lambda e: e["data_ini"])
             t.pieces = subtract_ranges(t.period_start, t.period_end,
                                        [(e["data_ini"], e["data_fim"]) for e in t.excluded])
-            t.blocks = plan_pieces(t.pieces, t.subblock_unit, t.subblock_size, t.calendar_aligned)
+            if ft == "DATE":
+                t.blocks = plan_pieces(t.pieces, t.subblock_unit, t.subblock_size, t.calendar_aligned)
+            elif ft == "NUMBER":
+                t.blocks = plan_count_pieces(t.period_start, t.period_end, t.subblock_size, t.pieces)
+            else:  # sem filtro: a tabela inteira numa única chamada
+                t.blocks = [Subblock(seq=1, start=0, end=0)] if t.pieces else []
     return tables
 
 
@@ -323,29 +365,31 @@ def _insert_request(db, actor, name, max_parallel, deadline_at, notes, tables: l
             if t.is_reprocess:
                 sup = conn.execute("""
                     UPDATE export_subblock SET status = 'SUPERSEDED', updated_at = now()
-                    WHERE table_config_id = %s AND data_range && %s AND status = 'DONE'
-                    RETURNING subblock_id""", (t.table_config_id, _daterange(t.period_start, t.period_end))).fetchall()
+                    WHERE table_config_id = %s AND key_range && int8range(%s, %s, '[]') AND status = 'DONE'
+                    RETURNING subblock_id""", (t.table_config_id, *_keys(t.filter_type, t.period_start, t.period_end))).fetchall()
                 log_event(conn, rid, "REPROCESS_SUPERSEDED", actor,
                           {"table_config_id": t.table_config_id, "subblocks": len(sup), "reason": t.reprocess_reason})
             rt = conn.execute("""
                 INSERT INTO export_request_table (request_id, ordinal, table_config_id, config_version,
-                  period_start, period_end, subblock_unit, subblock_size, calendar_aligned,
+                  period_start, period_end, key_lo, key_hi, subblock_unit, subblock_size, calendar_aligned,
                   is_reprocess, reprocess_reason, excluded_ranges)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING request_table_id""",
-                (rid, ordinal, t.table_config_id, t.config_version, t.period_start, t.period_end,
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING request_table_id""",
+                (rid, ordinal, t.table_config_id, t.config_version,
+                 *((t.period_start, t.period_end) if t.filter_type == "DATE" else (None, None)),
+                 *_keys(t.filter_type, t.period_start, t.period_end),
                  t.subblock_unit, t.subblock_size, t.calendar_aligned, t.is_reprocess, t.reprocess_reason,
                  json.dumps(t.excluded, default=str))).fetchone()
             with conn.cursor() as cur:
                 cur.executemany("""
-                    INSERT INTO export_subblock (request_table_id, request_id, table_config_id, seq, data_range, status)
-                    VALUES (%s,%s,%s,%s,%s,'PENDING')""",
-                    [(rt["request_table_id"], rid, t.table_config_id, b.seq, _daterange(b.start, b.end))
+                    INSERT INTO export_subblock (request_table_id, request_id, table_config_id, seq, key_range, status)
+                    VALUES (%s,%s,%s,%s,int8range(%s, %s, '[]'),'PENDING')""",
+                    [(rt["request_table_id"], rid, t.table_config_id, b.seq, *_keys(t.filter_type, b.start, b.end))
                      for b in t.blocks])
         log_event(conn, rid, "REQUEST_SUBMITTED", actor,
                   {"tables": [t.table_config_id for t in tables if t.blocks],
                    "skipped_tables": [t.table_config_id for t in tables if not t.blocks],
                    "subblocks": sum(len(t.blocks) for t in tables),
-                   "excluded_days": sum(t.excluded_days for t in tables), "max_parallel": max_parallel,
+                   "excluded_units": sum(t.excluded_units for t in tables), "max_parallel": max_parallel,
                    "scheduled_start_at": scheduled_start_at})
         return str(rid)
 
@@ -369,26 +413,38 @@ def get_request(db: Database, request_id: str):
 
 
 def request_tables(db: Database, request_id: str):
-    return db.query("SELECT * FROM v_request_table_progress WHERE request_id = %s ORDER BY ordinal", (request_id,))
+    return with_natives(db.query("SELECT * FROM v_request_table_progress WHERE request_id = %s ORDER BY ordinal",
+                                 (request_id,)))
 
 
 def request_subblocks(db: Database, request_id: str, status: str | None = None, limit: int = 2000):
     extra = "AND s.status = %s" if status else ""
     params = (request_id, status, limit) if status else (request_id, limit)
-    return db.query(f"""
-        SELECT s.*, lower(s.data_range) AS data_ini, upper(s.data_range) - 1 AS data_fim, rt.ordinal,
+    return with_natives(db.query(f"""
+        SELECT s.*, lower(s.key_range) AS key_lo, upper(s.key_range) - 1 AS key_hi, v.filter_type, rt.ordinal,
                a.databricks_run_id, a.error_class,
                tp.export_s, tp.import_s, tp.export_rows_s, tp.import_rows_s, tp.import_mb_s, tp.bytes
         FROM export_subblock s
         JOIN export_request_table rt USING (request_table_id)
+        JOIN table_config_version v ON v.table_config_id = rt.table_config_id AND v.config_version = rt.config_version
         LEFT JOIN v_subblock_throughput tp USING (subblock_id)
         LEFT JOIN LATERAL (SELECT databricks_run_id, error_class FROM export_attempt
                            WHERE subblock_id = s.subblock_id ORDER BY attempt_no DESC LIMIT 1) a ON true
         WHERE s.request_id = %s {extra}
         ORDER BY CASE s.status WHEN 'RUNNING' THEN 0 WHEN 'IMPORTING' THEN 0 WHEN 'EXPORTED' THEN 1
                  WHEN 'UNKNOWN' THEN 1 WHEN 'FAILED' THEN 2 WHEN 'IMPORT_FAILED' THEN 2
-                 WHEN 'PENDING' THEN 3 ELSE 4 END, rt.ordinal, lower(s.data_range) DESC
-        LIMIT %s""", params)
+                 WHEN 'PENDING' THEN 3 ELSE 4 END, rt.ordinal, lower(s.key_range) DESC
+        LIMIT %s""", params))
+
+
+def get_subblock(db: Database, subblock_id: str):
+    rows = with_natives(db.query("""
+        SELECT s.*, lower(s.key_range) AS key_lo, upper(s.key_range) - 1 AS key_hi, v.filter_type, r.request_name
+        FROM export_subblock s JOIN export_request r USING (request_id)
+        JOIN export_request_table rt USING (request_table_id)
+        JOIN table_config_version v ON v.table_config_id = rt.table_config_id AND v.config_version = rt.config_version
+        WHERE s.subblock_id = %s""", (subblock_id,)))
+    return rows[0] if rows else None
 
 
 _THROUGHPUT_AGG = """
@@ -461,7 +517,7 @@ def resume_request(db: Database, request_id: str, actor: str, retry_failed: bool
                 WHERE s.request_id = %s AND s.status = ANY(%s)
                   AND NOT EXISTS (SELECT 1 FROM export_subblock o
                                   WHERE o.table_config_id = s.table_config_id AND o.subblock_id <> s.subblock_id
-                                    AND o.status = ANY(%s) AND o.data_range && s.data_range)
+                                    AND o.status = ANY(%s) AND o.key_range && s.key_range)
                 RETURNING s.subblock_id""", (request_id, statuses, list(LIVE))).fetchall())
         log_event(conn, request_id, "REQUEST_RESUMED", actor, {"requeued_subblocks": n, "statuses": statuses})
 
@@ -567,13 +623,17 @@ def cancel_failed(db: Database, request_id: str, actor: str, reason: str, subblo
             UPDATE export_subblock SET status = 'CANCELED', next_attempt_at = NULL, updated_at = now(),
                    last_error = coalesce(last_error, '') || ' | cancelado: ' || %s
             WHERE request_id = %s AND status = 'FAILED' {extra}
-            RETURNING subblock_id, lower(data_range) AS data_ini, upper(data_range) - 1 AS data_fim""",
+            RETURNING subblock_id, lower(key_range) AS key_lo, upper(key_range) - 1 AS key_hi,
+                      (SELECT v.filter_type FROM export_request_table rt JOIN table_config_version v
+                         ON v.table_config_id = rt.table_config_id AND v.config_version = rt.config_version
+                       WHERE rt.request_table_id = export_subblock.request_table_id) AS filter_type""",
             (reason, *params)).fetchall()
+        with_natives(rows)
         if not rows:
             raise StateError("nenhum subbloco com falha para cancelar")
         log_event(conn, request_id, "FAILED_SUBBLOCKS_CANCELED", actor,
                   {"count": len(rows), "reason": reason,
-                   "periods": [f"{r['data_ini']}..{r['data_fim']}" for r in rows][:50]},
+                   "periods": [faixa.fmt_range(r["filter_type"], r["data_ini"], r["data_fim"]) for r in rows][:50]},
                   subblock_id=subblock_id)
         _refresh_request_status(conn, request_id, actor)
         return len(rows)
@@ -598,13 +658,13 @@ def migration_coverage(db: Database):
 
 
 def table_ranges(db: Database, table_config_id: str) -> dict[str, list[dict]]:
-    """Intervalos (datas inclusivas) por situação dentro do escopo: lacunas, falhas e desconhecidos."""
+    """Faixas (inclusivas, valores nativos) por situação dentro do escopo: lacunas, falhas e desconhecidos."""
     out = {}
     for kind, col in (("missing", "missing_ranges"), ("failed", "failed_ranges"), ("unknown", "unknown_ranges")):
-        out[kind] = db.query(f"""
-            SELECT lower(r) AS data_ini, upper(r) - 1 AS data_fim, upper(r) - lower(r) AS days
-            FROM v_migration_coverage c, unnest(c.{col}::datemultirange) r
-            WHERE c.table_config_id = %s ORDER BY lower(r)""", (table_config_id,))
+        out[kind] = with_natives(db.query(f"""
+            SELECT c.filter_type, lower(r) AS key_lo, upper(r) - 1 AS key_hi, upper(r) - lower(r) AS units
+            FROM v_migration_coverage c, unnest(c.{col}::int8multirange) r
+            WHERE c.table_config_id = %s ORDER BY lower(r)""", (table_config_id,)))
     return out
 
 
@@ -615,10 +675,21 @@ def gap_rows(db: Database, table_ids: list[str]) -> list[dict]:
         cfg = get_table(db, tid)
         if not cfg:
             continue
+        ft = faixa.ftype(cfg)
+        sc = faixa.scope(cfg)
         for g in table_ranges(db, tid)["missing"]:
-            rows.append({"table": tid, "start": g["data_ini"].isoformat(), "end": g["data_fim"].isoformat(),
-                         "size": str(cfg["default_subblock_size"]), "unit": cfg["default_subblock_unit"],
-                         "aligned": "1", "reprocess": "0", "reason": ""})
+            row = {"table": tid, "aligned": "1", "reprocess": "0", "reason": ""}
+            if ft == "DATE":
+                row |= {"start": g["data_ini"].isoformat(), "end": g["data_fim"].isoformat(),
+                        "size": str(cfg["default_subblock_size"]), "unit": cfg["default_subblock_unit"]}
+            elif ft == "NUMBER":
+                # mesmo tamanho de subbloco que a quantidade padrão dá sobre o escopo inteiro
+                step = -(-faixa.units(ft, *sc) // cfg["default_subblock_count"])
+                row |= {"start": str(g["data_ini"]), "end": str(g["data_fim"]), "unit": "COUNT",
+                        "size": str(max(1, -(-g["units"] // step)))}
+            else:
+                row |= {"start": "", "end": "", "unit": "WHOLE", "size": "1"}
+            rows.append(row)
     return rows
 
 

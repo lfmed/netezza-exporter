@@ -78,7 +78,7 @@ As chaves são `<id da conexão>-host`, `-port`, `-user` e `-password`. A conex�
 1. **🔌 Conexão Netezza**: confira a URL de conexão e informe o banco, padrões de `p_banco` e do banco e esquema da external table, e o
    **caminho da landing** (`s3://...`) com as pastas do `.dat`, de erro e de limpeza. Depois, **Testar conexão**.
 2. **Administração → Tabelas exportáveis**: cadastre as tabelas pela tela ou por **CSV** (botão "Baixar modelo CSV"),
-   com procedure, coluna de tempo, destino e escopo da migração.
+   com procedure, tipo de filtro (Data, Número ou Sem filtro), coluna do filtro, destino e escopo da migração.
 3. Rode `nzexport_pos_deploy` de novo. Ele confere as tabelas destino e a landing já configuradas.
 4. **Painel da migração → Criar pedido para as lacunas**.
 

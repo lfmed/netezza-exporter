@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from databricks.sdk import WorkspaceClient
 
-from . import file_format, lifecycle
+from . import faixa, file_format, lifecycle
 from . import motor_dat as m
 from .db import Database
 from .repo import log_event
@@ -40,6 +40,7 @@ class ImportWork:
     import_attempt_id: str
     dest: str
     time_column: str | None
+    filter_type: str
     file_options: dict
     is_reprocess: bool
     ini: str
@@ -152,7 +153,7 @@ class Importer:
                 by_dest[r["dest"]] += r["n"]
             cands = conn.execute("""
                 SELECT s.subblock_id, s.request_id, s.table_config_id, s.import_attempts, s.file_name,
-                       to_char(lower(s.data_range), 'YYYYMMDD') AS ini, to_char(upper(s.data_range) - 1, 'YYYYMMDD') AS fim,
+                       lower(s.key_range) AS key_lo, upper(s.key_range) - 1 AS key_hi, v.filter_type,
                        tc.source_id, rt.is_reprocess, v.time_column, v.file_options,
                        v.dest_catalog || '.' || v.dest_schema || '.' || v.dest_table AS dest
                 FROM export_subblock s
@@ -161,7 +162,7 @@ class Importer:
                 JOIN table_config tc ON tc.table_config_id = s.table_config_id
                 JOIN table_config_version v ON v.table_config_id = rt.table_config_id AND v.config_version = rt.config_version
                 WHERE s.status = 'EXPORTED'
-                ORDER BY r.submitted_at, rt.ordinal, lower(s.data_range) DESC
+                ORDER BY r.submitted_at, rt.ordinal, lower(s.key_range) DESC
                 LIMIT 500
                 FOR UPDATE OF s SKIP LOCKED""").fetchall()
             works = []
@@ -184,10 +185,13 @@ class Importer:
                                       status, file_path, dest_table) VALUES (%s,%s,%s,'RUNNING',%s,%s)
                                       RETURNING import_attempt_id""",
                                    (c["subblock_id"], n, self.run_id, path, c["dest"])).fetchone()
+                ft = c["filter_type"]
+                ini, fim = (faixa.from_key(ft, c["key_lo"]), faixa.from_key(ft, c["key_hi"]))
+                ini, fim = (ini.strftime("%Y%m%d"), fim.strftime("%Y%m%d")) if ft == "DATE" else (str(ini), str(fim))
                 works.append(ImportWork(
                     str(c["subblock_id"]), str(c["request_id"]), c["table_config_id"], c["source_id"], n,
-                    str(att["import_attempt_id"]), c["dest"], c["time_column"],
-                    file_format.effective(c["file_options"]), bool(c["is_reprocess"]), c["ini"], c["fim"], path,
+                    str(att["import_attempt_id"]), c["dest"], c["time_column"] if ft != "NONE" else None, ft,
+                    file_format.effective(c["file_options"]), bool(c["is_reprocess"]), ini, fim, path,
                     f"{root}/{src['landing_error_folder'].strip('/')}", f"{root}/{src['landing_work_folder'].strip('/')}",
                     int(src["file_wait_min"] or 0)))
             return works
@@ -200,6 +204,7 @@ class Importer:
         meta, inicio, detalhe, size, cleaned = None, time.time(), [], None, None
         try:
             meta = m.metadados(wk.dest, wk.file_options, wk.time_column)
+            meta["filtro"] = wk.filter_type
             feito = m.ja_carregado(meta, tag)
             if feito:
                 versao, linhas = feito
@@ -220,7 +225,7 @@ class Importer:
         except Exception as e:  # noqa: BLE001 - qualquer erro: limpa o período e libera o subbloco
             tipo, msg = (e.tipo, e.mensagem) if isinstance(e, m.ErroCarga) else m.classificar(e)
             limpeza_msg = None
-            if meta and meta.get("col_tempo"):
+            if meta and (meta.get("col_tempo") or meta.get("filtro") == "NONE"):
                 try:
                     cleaned = m.limpar_periodo(meta, wk.ini, wk.fim)
                     limpeza_msg = f"{cleaned} linha(s) do período removidas do destino"

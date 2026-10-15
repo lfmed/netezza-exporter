@@ -112,9 +112,28 @@ Desenvolvimento:
    - autentica;
    - mostra o usuário e o banco da sessão, e a versão do Netezza;
    - verifica se a procedure existe nos bancos das external tables.
-3. Em cada tabela, use o perfil **SP_CARGA_EVENTUAL** e informe `p_tabela`, `p_NomeColunaTempo` e, se forem
-   diferentes do padrão da conexão, `p_banco` e o banco e o esquema da external table. A tela mostra a prévia
-   exata do `CALL`.
+3. Em cada tabela, use o perfil **SP_CARGA_EVENTUAL** e informe `p_tabela`, o **tipo de filtro**,
+   `p_NomeColunaTempo` (exceto no sem filtro) e, se forem diferentes do padrão da conexão, `p_banco` e o banco e o
+   esquema da external table. A tela mostra a prévia exata do `CALL`.
+
+### Tipo de filtro da tabela
+
+| Tipo | `p_NomeColunaTempo` | `p_dtini` / `p_dtfim` | Escopo | Subblocos | Limpeza no destino (reprocesso/erro) |
+|---|---|---|---|---|---|
+| **Data** | coluna de data | `AAAAMMDD` | primeiro e último dia | calendário (dia, semana, mês, ano); mais recente primeiro | `BETWEEN` no período |
+| **Número** | coluna inteira | mínimo e máximo inteiros | valor mínimo e máximo | **quantidade** de subblocos na faixa; maior valor primeiro | `BETWEEN` na faixa |
+| **Sem filtro** | `'1'` | `'1'` / `'1'` (`WHERE 1 BETWEEN 1 AND 1`) | a tabela inteira | uma única chamada; `.dat` `<TABELA>_1_1.dat` | **`DELETE` da tabela destino inteira** |
+
+- Número e Sem filtro só existem no perfil `SP_CARGA_EVENTUAL`. A SP concatena os valores no `BETWEEN`, então a
+  mesma procedure serve para os três tipos.
+- O tipo de filtro não muda depois que a tabela tem subblocos (as faixas gravadas deixariam de ser comparáveis);
+  para trocar, cadastre outro identificador.
+- Na quantidade de subblocos, o passo é `teto(tamanho da faixa / quantidade)`. Faixas já executadas saem do lote
+  sem deslocar os cortes. O pedido das lacunas usa o mesmo tamanho de subbloco que a quantidade padrão dá sobre o
+  escopo.
+- Sem filtro exige um destino **exclusivo** dessa tabela: em reprocesso ou erro de importação, ele é apagado inteiro.
+- Internamente, toda faixa é um `int8range` (`key_range`): dias desde 1970-01-01 (Data), o valor (Número) ou `[0, 1)`
+  (Sem filtro). A cobertura conta unidades: dias, valores ou 1 tabela.
 
 ### Chamada da `SP_CARGA_EVENTUAL`
 
@@ -122,8 +141,9 @@ Desenvolvimento:
 CALL SP_CARGA_EVENTUAL(p_banco, p_tabela, p_banco_ext_table, p_esquema_ext_table, p_dtini, p_dtfim, p_NomeColunaTempo)
 ```
 
-- `p_dtini`/`p_dtfim` vêm do subbloco, em `AAAAMMDD`, com o fim inclusivo. A procedure filtra com
-  `BETWEEN p_dtini AND p_dtfim`, sem aspas, então a coluna de tempo deve ser numérica `AAAAMMDD`.
+- `p_dtini`/`p_dtfim` vêm do subbloco, com o fim inclusivo: `AAAAMMDD` (Data), inteiros (Número) ou `'1'` (Sem
+  filtro). A procedure filtra com `BETWEEN p_dtini AND p_dtfim`, sem aspas, então na Data a coluna deve ser numérica
+  `AAAAMMDD`.
 - A sessão é aberta no **banco da external table**, porque a procedure faz `INSERT INTO esquema.tabela` sem o banco.
 - Os valores são validados (só letras, números e `_`) antes de montar o comando, porque o `nzpy` não escapa
   parâmetros e a procedure concatena os valores em SQL dinâmico.

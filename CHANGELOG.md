@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.010 — 2026-10-15
+- Tipo de filtro no cadastro da tabela: Data (AAAAMMDD, subbloco por calendário), Número (coluna inteira, escopo mínimo-máximo dividido numa quantidade de subblocos, maior valor primeiro, limpeza BETWEEN no destino) e Sem filtro (tabela inteira numa chamada com filtro sempre verdadeiro '1','1','1', .dat <TABELA>_1_1.dat, DELETE total do destino em reprocesso/erro). Faixa genérica int8range (key_range) no lugar de data_range, com migração; cobertura em unidades; tipo travado quando há subblocos; telas, pedido, revisão, CSV (filter_type, scope_min/max, default_subblock_count) e pós-deploy (coluna do filtro no destino) por tipo; opção YYYY-MM-DD removida.
+
 ## 1.009 — 2026-10-15
 - Variável serverless_policy_id no bundle: política de serverless (budget policy) aplicada ao app; vazia = política padrão do workspace; placeholders em hml/prd.
 

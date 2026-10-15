@@ -44,8 +44,6 @@ Documentos: `README.md` (operação), `DEPLOY.md` (deploy no cliente), `CHANGELO
 | Catálogo dev | `stable_classic_pg4xe1_catalog`; warehouse para testes `9981e1dca61efe86` |
 | Health | `GET /api/health` → `{"ok":true,"version":"..."}` (`/healthz` é interceptado pela plataforma) |
 
-Plano pendente de aprovação: `plano_filtro_between.md` (tipo de filtro Data/Número/Sem filtro, alvo v1.010).
-
 **Pendente do lado do usuário:** host, credenciais e landing do Netezza no app. Os targets `hml`/`prd` do
 `databricks.yml` têm placeholders `<...>` à espera dos valores do cliente.
 
@@ -72,13 +70,17 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
   UPDATE use `tx()`, não `query()`.
 - `nzexport/schema.sql`: migrações idempotentes, aplicadas por `migrate.py` (no pós-deploy ou por
   `scripts/migrate_local.py`). Para mudar as colunas de uma view, faça `DROP VIEW` e depois `CREATE`.
+- `nzexport/faixa.py` (v1.010): tipo de filtro `DATE`/`NUMBER`/`NONE` e a faixa genérica. Valores nativos: date, int
+  ou 0; chave inteira: dias desde 1970-01-01, o valor ou 0. `to_key`/`from_key`/`units`/`fmt_range`.
 - `nzexport/repo.py`: todas as consultas e ações (pedidos, revisão que exclui períodos já executados, retry/cancel,
-  cobertura, vazão). `planner.py`: quebra em subblocos alinhados ao calendário (máx. 5000).
+  cobertura, vazão). Lê `key_lo`/`key_hi` e converte com `with_natives`. `planner.py`: calendário (Data),
+  `plan_count`/`plan_count_pieces` (Número, quantidade) e intervalos genéricos (máx. 5000).
   `lifecycle.py`: finaliza pedidos e dispara hooks.
 - `nzexport/dispatcher.py`: claim com `FOR UPDATE SKIP LOCKED`, lease e heartbeat, concorrência
-  = mín(global da conexão, tabela, pedido); processa **o período mais recente primeiro**; retry com backoff; um reaper
+  = mín(global da conexão, tabela, pedido); processa **o período mais recente / maior valor primeiro**; retry com backoff; um reaper
   marca leases expiradas como `UNKNOWN`.
-- `nzexport/procedure.py`: perfis `SP_CARGA_EVENTUAL` (7 args, padrão) e `TABELA_INI_FIM` (3 args).
+- `nzexport/procedure.py`: perfis `SP_CARGA_EVENTUAL` (7 args, padrão) e `TABELA_INI_FIM` (3 args, só Data).
+  - Número: `p_dtini`/`p_dtfim` = mínimo/máximo. Sem filtro: coluna, ini e fim = `'1'` (`WHERE 1 BETWEEN 1 AND 1`).
   - O `nzpy` substitui `?` **sem escapar**, por isso os valores são validados por regex e o app monta os literais.
   - A sessão usa o banco da external table.
   - Saída da SP: `/tmp/<TABELA>_<ini>_<fim>.dat` no datasource `PLH_DATASOURCE_DWA`, `DELIM '|'`, header, escape `\`.
@@ -87,7 +89,7 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
   `importer.py` + `importar_dat.py` (notebook):
   - append com `userMetadata=nzexport:<subblock_id>`, que permite retomar via `DESCRIBE HISTORY`;
   - uma importação por tabela destino de cada vez;
-  - num reprocessamento, apaga o período antes do append.
+  - num reprocessamento, apaga o período antes do append (`BETWEEN` na Data/Número; Sem filtro: `DELETE` total).
 - `nzexport/file_format.py`: opções do `.dat` com padrões do PLHDWA (ISO-8859-15, `|`, header...).
   `table_csv.py`: importação e exportação do cadastro de tabelas por CSV.
 - Entradas de job: `run_dispatcher.py`, `run_conn_test.py`, `importar_dat.py`, `pos_deploy.py`. Em
@@ -97,7 +99,7 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
 ## Modelo de estados
 - Subbloco: `PENDING → RUNNING → EXPORTED → IMPORTING → DONE`, mais `FAILED`, `IMPORT_FAILED`, `UNKNOWN`, `CANCELED`
   e `SUPERSEDED`.
-  - **Reservam o período** (EXCLUDE btree_gist em `daterange [)`): PENDING, RUNNING, EXPORTED, IMPORTING, DONE, UNKNOWN e
+  - **Reservam o período** (EXCLUDE btree_gist em `key_range int8range [)`, desde a v1.010; antes `data_range`): PENDING, RUNNING, EXPORTED, IMPORTING, DONE, UNKNOWN e
     FAILED.
   - **Liberam o período**: CANCELED, SUPERSEDED e IMPORT_FAILED.
   - Um subbloco **cancelado é definitivo** no pedido (não pode ser repetido); o período volta num novo pedido.
@@ -110,9 +112,11 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
   ponderadas.
 
 ## Testes e verificação
-- Unitários: `.venv/bin/python -m pytest tests` (23 testes).
+- Unitários: `.venv/bin/python -m pytest tests` (35 testes).
 - E2E real do importador: `.venv/bin/python scripts/teste_importacao.py`. Cria um branch Lakebase e um schema/volume
-  temporários, roda o job real, confere e limpa.
+  temporários, roda os jobs reais (importador nos 3 tipos de filtro e dispatcher sem Netezza), confere e limpa.
+- Modelo e telas no branch: `.venv/bin/python scripts/teste_filtro_branch.py` (migração `data_range`→`key_range`, pedidos
+  por tipo, cobertura e formulários pelo Flask local).
 - Para testar sem tocar a produção: crie um **branch Lakebase temporário** (`ttl`), migre-o e aponte os jobs/scripts para o
   endpoint dele; apague o branch no fim. Branch sem expiração exige `no_expiry: true` (um ttl de 30 dias falhou).
 - Screenshots: Chrome headless em background, salvos em `scripts/screenshots/` (gitignored).
@@ -123,4 +127,5 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
 0.995 ordenar por completude · 0.996 cadastro por CSV · 0.997 cancelado é definitivo · 0.998 mais recente primeiro ·
 0.999 chamada da `SP_CARGA_EVENTUAL` · 1.000 tela de conexão Netezza · 1.001 remove simulação · 1.002 destino UC com
 navegador · 1.003 landing e formato do arquivo · 1.004 job importador · 1.005 deploy repetível (targets, pós-deploy,
-secret scope) · 1.006 vazão (reg/s) por subbloco, tabela e histórica.
+secret scope) · 1.006 vazão (reg/s) por subbloco, tabela e histórica · 1.007 host/porta no secret scope · 1.008 app só
+lê o scope · 1.009 política de serverless do app · 1.010 tipo de filtro (Data, Número, Sem filtro).

@@ -20,9 +20,11 @@
 
 <div class="card">
   <h2>Tabelas</h2>
-  <p class="hint">Cada subbloco gera <b>uma chamada</b> da procedure: <code>procedure(tabela, data_ini, data_fim)</code>, com <b>data_fim inclusiva</b>. Os subblocos são executados <b>do período mais recente para o mais antigo</b>.</p>
+  <p class="hint">Cada subbloco gera <b>uma chamada</b> da procedure com início e fim <b>inclusivos</b>. A linha segue o tipo de filtro da tabela:
+    <b>Data</b> (datas e subbloco por calendário, do período mais recente para o mais antigo), <b>Número</b> (valor mínimo e máximo
+    e a quantidade de subblocos, do maior valor para o menor) ou <b>Sem filtro</b> (a tabela inteira numa única chamada).</p>
   <table class="grid form-grid" id="rows">
-    <thead><tr><th>Tabela</th><th>Data inicial</th><th>Data final (inclusiva)</th><th>Subbloco</th><th>Alinhar ao calendário</th><th>Reprocessar</th><th>Justificativa</th><th></th></tr></thead>
+    <thead><tr><th>Tabela</th><th>Início</th><th>Fim (inclusivo)</th><th>Subbloco</th><th>Alinhar ao calendário</th><th>Reprocessar</th><th>Justificativa</th><th></th></tr></thead>
     <tbody></tbody>
   </table>
   <button type="button" class="btn ghost" id="add-row">+ Adicionar tabela</button>
@@ -34,13 +36,17 @@
   <tr>
     <td><select name="table" required class="tbl-select">
       <option value="">— selecione —</option>
-      {% for t in tables %}<option value="{{ t.table_config_id }}" data-unit="{{ t.default_subblock_unit }}" data-size="{{ t.default_subblock_size }}" data-start="{{ t.migration_start or '' }}" data-end="{{ t.migration_end or '' }}">{{ t.table_config_id }} ({{ t.source_table }})</option>{% endfor %}
+      {% for t in tables %}{% set ft = t.filter_type or 'DATE' %}<option value="{{ t.table_config_id }}" data-ft="{{ ft }}" data-unit="{{ t.default_subblock_unit }}"
+        data-size="{{ t.default_subblock_size if ft == 'DATE' else (t.default_subblock_count if ft == 'NUMBER' else 1) }}"
+        data-start="{{ (t.migration_start or '') if ft == 'DATE' else (t.scope_num_min if ft == 'NUMBER' and t.scope_num_min is not none else '') }}"
+        data-end="{{ (t.migration_end or '') if ft == 'DATE' else (t.scope_num_max if ft == 'NUMBER' and t.scope_num_max is not none else '') }}">{{ t.table_config_id }} ({{ t.source_table }}) · {{ FILTER_TYPES[ft] }}</option>{% endfor %}
     </select></td>
-    <td><input type="date" name="start" required></td>
+    <td><input type="date" name="start" required><span class="muted whole" hidden>tabela inteira</span></td>
     <td><input type="date" name="end" required></td>
     <td class="nowrap"><input type="number" name="size" min="1" value="1" style="width:4.5em">
-      <select name="unit">{% for u in UNITS %}<option value="{{ u }}">{{ UNIT_LABEL[u] }}</option>{% endfor %}</select></td>
-    <td><select name="aligned"><option value="1">Sim</option><option value="0">Não</option></select></td>
+      <select name="unit">{% for u in UNITS %}<option value="{{ u }}">{{ UNIT_LABEL[u] }}</option>{% endfor %}</select>
+      <span class="muted count-label" hidden>subbloco(s) na faixa</span><span class="muted whole" hidden>1 chamada</span></td>
+    <td><select name="aligned"><option value="1">Sim</option><option value="0">Não</option></select><span class="muted no-align" hidden>—</span></td>
     <td><select name="reprocess"><option value="0">Não</option><option value="1">Sim</option></select></td>
     <td><input name="reason" placeholder="obrigatória se reprocessar"></td>
     <td><button type="button" class="btn ghost small rm">✕</button></td>

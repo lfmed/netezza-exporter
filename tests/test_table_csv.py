@@ -14,11 +14,16 @@ DEFAULTS = {"netezza": {"default_source_database": "DWA", "default_ext_database"
 
 def test_template_parses_cleanly():
     rows = table_csv.parse(table_csv.template_csv(), DEFAULTS)
-    assert [r.errors for r in rows] == [[], [], []]
+    assert [r.errors for r in rows] == [[], [], [], []]
     saude = rows[1].values
     assert saude["table_config_id"] == "FATO_SAUDE" and saude["default_subblock_size"] == 3
     assert saude["migration_start"] == date(2018, 1, 1) and saude["migration_end"] == date(2025, 12, 31)
-    assert rows[2].values["default_subblock_unit"] == "DAY"
+    assert saude["filter_type"] == "DATE"
+    contrato, agencia = rows[2].values, rows[3].values
+    assert contrato["filter_type"] == "NUMBER" and contrato["default_subblock_count"] == 20
+    assert (contrato["scope_num_min"], contrato["scope_num_max"]) == (1, 250_000_000)
+    assert contrato["migration_start"] is None
+    assert agencia["filter_type"] == "NONE" and agencia["time_column"] is None and agencia["scope_num_min"] is None
 
 
 def test_comma_delimiter_defaults_and_aliases():
@@ -68,14 +73,15 @@ def test_classify_new_version_and_unchanged():
     v = rows[0].values
     current = {"FATO_VENDAS": {**v}, "FATO_SAUDE": {**rows[1].values, "max_parallel": 5}}
     table_csv.classify(rows, current)
-    assert [r.action for r in rows] == ["SEM_ALTERACAO", "NOVA_VERSAO", "NOVA"]
+    assert [r.action for r in rows] == ["SEM_ALTERACAO", "NOVA_VERSAO", "NOVA", "NOVA"]
     assert rows[1].changes == [{"field": "max_parallel", "old": 5, "new": 1}]
 
 
 def test_export_roundtrip():
     t = {"table_config_id": "FATO_Z", "source_id": "netezza", "active": False, "source_table": "DW.Z",
          "call_profile": "TABELA_INI_FIM", "source_database": None, "ext_database": None, "ext_schema": None,
-         "time_column": None, "date_format": "YYYYMMDD", "procedure_name": "ADMIN.SP",
+         "filter_type": "DATE", "time_column": None, "date_format": "YYYYMMDD", "procedure_name": "ADMIN.SP",
+         "default_subblock_count": 10, "scope_num_min": None, "scope_num_max": None,
          "dest_catalog": "cat", "dest_schema": "sch", "dest_table": "fato_z", "default_subblock_unit": "YEAR", "default_subblock_size": 1, "max_parallel": 3,
          "call_timeout_min": 60, "max_retries": 0, "retry_unknown": False, "migration_start": date(2020, 1, 1),
          "migration_end": date(2020, 12, 31), "description": None}
@@ -100,3 +106,26 @@ def test_file_options_keep_only_differences():
     assert eff["encoding"] == "UTF-8" and eff["delimitador"] == "|" and eff["limpeza_modo"] == "CLIENTE"
     with pytest.raises(ValueError):
         file_format.clean({"limpeza_modo": "XPTO"})
+
+
+def test_number_filter_rules():
+    head = "table_config_id;source_table;filter_type;time_column;scope_min;scope_max;default_subblock_count\n"
+    r = table_csv.parse(head + "FATO_N;FATO_N;numero;NR;1.000;-5;9999\n", DEFAULTS)[0]
+    assert any("scope_min maior" in e for e in r.errors) and any("default_subblock_count" in e for e in r.errors)
+    r = table_csv.parse(head + "FATO_N;FATO_N;NUMERO;;1;10;5\n", DEFAULTS)[0]
+    assert any("time_column: obrigatória" in e for e in r.errors)
+    r = table_csv.parse(head + "FATO_N;FATO_N;NUMERO;NR;-10;10;\n", DEFAULTS)[0]
+    assert not r.errors and r.values["scope_num_min"] == -10 and r.values["default_subblock_count"] == 10
+    r = table_csv.parse(head + "FATO_N;FATO_N;XPTO;NR;;;\n", DEFAULTS)[0]
+    assert any("filter_type" in e for e in r.errors)
+
+
+def test_no_filter_ignores_column_and_scope_and_legacy_date_format_is_accepted():
+    head = "table_config_id;source_table;filter_type;time_column;migration_start;migration_end;date_format\n"
+    r = table_csv.parse(head + "DIM_X;DIM_X;SEM_FILTRO;SK;2020-01-01;2020-12-31;YYYY-MM-DD\n", DEFAULTS)[0]
+    assert not r.errors
+    assert r.values["time_column"] is None and r.values["migration_start"] is None
+    assert r.values["date_format"] == "YYYYMMDD"
+    r = table_csv.parse("table_config_id;source_table;filter_type;call_profile;procedure_name\n"
+                        "DIM_Y;DW.Y;SEM_FILTRO;TABELA_INI_FIM;ADMIN.SP\n", DEFAULTS)[0]
+    assert any("SP_CARGA_EVENTUAL" in e for e in r.errors)

@@ -3,19 +3,51 @@ function initRequestForm(rows) {
   const tbody = document.querySelector('#rows tbody');
   const tpl = document.getElementById('row-tpl');
   if (!tbody || !tpl) return;
+  // Ajusta a linha ao tipo de filtro da tabela: Data (datas + calendário), Número (mín./máx. + quantidade)
+  // ou Sem filtro (tabela inteira). Os campos ficam no formulário (só escondidos) para as listas não desalinharem.
+  const configure = (tr, ft) => {
+    const q = (s) => tr.querySelector(s), all = (s) => tr.querySelectorAll(s);
+    const st = q('[name=start]'), en = q('[name=end]'), size = q('[name=size]');
+    const prev = tr.dataset.ft;
+    tr.dataset.ft = ft;
+    for (const el of [st, en]) {
+      el.type = ft === 'DATE' ? 'date' : 'text';
+      el.inputMode = ft === 'NUMBER' ? 'numeric' : '';
+      el.pattern = ft === 'NUMBER' ? '-?[0-9.]+' : '.*';
+      el.placeholder = ft === 'NUMBER' ? (el === st ? 'valor mínimo' : 'valor máximo') : '';
+      el.required = ft !== 'NONE';
+      el.hidden = ft === 'NONE';
+      if (prev && prev !== ft) el.value = '';
+    }
+    size.hidden = ft === 'NONE';
+    size.max = ft === 'NUMBER' ? 5000 : 1000;
+    q('[name=unit]').hidden = ft !== 'DATE';
+    q('[name=aligned]').hidden = ft !== 'DATE';
+    q('.no-align').hidden = ft === 'DATE';
+    q('.count-label').hidden = ft !== 'NUMBER';
+    all('.whole').forEach((el) => { el.hidden = ft !== 'NONE'; });
+  };
   const add = (data) => {
     const tr = tpl.content.firstElementChild.cloneNode(true);
     const sel = tr.querySelector('.tbl-select');
     sel.addEventListener('change', () => {
       const o = sel.selectedOptions[0];
+      configure(tr, (o && o.dataset.ft) || 'DATE');
       if (o && o.dataset.unit) { tr.querySelector('[name=unit]').value = o.dataset.unit; tr.querySelector('[name=size]').value = o.dataset.size; }
-      // sugere o escopo de migração da tabela quando as datas ainda estão vazias
+      // sugere o escopo de migração da tabela quando o início e o fim ainda estão vazios
       const st = tr.querySelector('[name=start]'), en = tr.querySelector('[name=end]');
       if (o && o.dataset.start && !st.value) st.value = o.dataset.start;
       if (o && o.dataset.end && !en.value) en.value = o.dataset.end;
     });
     tr.querySelector('.rm').addEventListener('click', () => { if (tbody.children.length > 1) tr.remove(); });
-    if (data) for (const [k, v] of Object.entries(data)) { const el = tr.querySelector(`[name=${k}]`); if (el) el.value = v; }
+    configure(tr, 'DATE');
+    if (data) {
+      // a tabela primeiro: o tipo de filtro define o tipo dos campos de início e fim
+      sel.value = data.table || '';
+      const o = sel.selectedOptions[0];
+      configure(tr, (o && o.dataset.ft) || 'DATE');
+      for (const [k, v] of Object.entries(data)) { const el = tr.querySelector(`[name=${k}]`); if (el && k !== 'table') el.value = v; }
+    }
     tbody.appendChild(tr);
   };
   (rows && rows.length ? rows : [null]).forEach(add);

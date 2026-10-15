@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import badge, progress %}
+{% from "_macros.html" import badge, progress, scope_txt, filter_badge %}
 {% block content %}
 <section class="head">
   <div><h1>📊 Painel da migração</h1><p>Completude por tabela: o que já foi migrado, o que está em execução e as lacunas</p></div>
@@ -19,12 +19,13 @@
   <h2>Completude da migração</h2>
   {% set o = overall %}
   <div class="kpis">
-    <div class="ok"><span class="big">{{ o.done_days|pct(o.scope_days) }}%</span><small>dos dias de dados no escopo migrados</small></div>
+    <div class="ok"><span class="big">{{ o.avg_pct|round(0, 'floor')|int }}%</span><small>completude média das tabelas com escopo</small></div>
     <div><span class="big">{{ o.complete_tables }}/{{ o.tables }}</span><small>tabelas completas</small></div>
-    <div class="warn"><span class="big">{{ o.missing_days }}</span><small>dias sem pedido (lacunas)</small></div>
-    <div class="err"><span class="big">{{ o.failed_days + o.unknown_days }}</span><small>dias com falha/desconhecido</small></div>
+    <div class="warn"><span class="big">{{ o.gaps }}</span><small>lacuna(s) sem pedido em {{ o.gap_tables }} tabela(s)</small></div>
+    <div class="err"><span class="big">{{ o.problem_tables }}</span><small>tabela(s) com falha/desconhecido</small></div>
   </div>
-  {{ progress(o.done_days, o.scope_days, o.failed_days + o.unknown_days, o.inflight_days, 'dias') }}
+  {{ progress(o.complete_tables, o.scoped, o.problem_tables, o.running_tables, 'tabelas completas') }}
+  <p class="hint">Cada tabela mede a completude na unidade do seu tipo de filtro: dias (Data), valores (Número) ou a tabela inteira (Sem filtro).</p>
 </div>
 
 <form method="post" action="{{ url_for('request_from_gaps') }}" class="card">
@@ -41,8 +42,8 @@
         <option value="name:asc">Ordenar: nome (A→Z)</option>
         <option value="pct:asc">Completude: menor primeiro</option>
         <option value="pct:desc">Completude: maior primeiro</option>
-        <option value="missing:desc">Mais dias de lacuna</option>
-        <option value="problem:desc">Mais dias com falha/desconhecido</option>
+        <option value="missing:desc">Maior lacuna (% do escopo)</option>
+        <option value="problem:desc">Mais falha/desconhecido (% do escopo)</option>
       </select>
       <button class="btn">Criar pedido para as lacunas selecionadas</button>
     </div>
@@ -57,17 +58,19 @@
     <tbody>
     {% for t in tables %}
       <tr data-cov="{{ t.coverage_status }}" data-name="{{ t.table_config_id }}"
-          data-pct="{{ '%.4f'|format(100 * t.done_days / t.scope_days) if t.scope_days else -1 }}"
-          data-missing="{{ t.missing_days or 0 }}" data-problem="{{ (t.failed_days or 0) + (t.unknown_days or 0) }}">
+          data-pct="{{ '%.4f'|format(100 * t.done_units / t.scope_units) if t.scope_units else -1 }}"
+          data-missing="{{ '%.4f'|format(100 * (t.missing_units or 0) / t.scope_units) if t.scope_units else 0 }}"
+          data-problem="{{ '%.4f'|format(100 * ((t.failed_units or 0) + (t.unknown_units or 0)) / t.scope_units) if t.scope_units else 0 }}">
         <td><input type="checkbox" name="table_ids" value="{{ t.table_config_id }}" {{ 'disabled' if not t.gap_count }}></td>
-        <td><a href="{{ url_for('coverage_detail', table_config_id=t.table_config_id) }}"><b>{{ t.table_config_id }}</b></a><br><small class="muted">{{ t.source_table }}</small></td>
+        {% set un = UNIT_NAME[t.filter_type] %}
+        <td><a href="{{ url_for('coverage_detail', table_config_id=t.table_config_id) }}"><b>{{ t.table_config_id }}</b></a><br><small class="muted">{{ t.source_table }}</small> · {{ filter_badge(t) }}</td>
         <td>{{ badge(t.coverage_status) }}</td>
-        <td class="nowrap">{% if t.migration_start %}{{ t.migration_start|dt }} → {{ t.migration_end|dt }}<br><small class="muted">{{ t.scope_days }} dias</small>{% else %}<a href="{{ url_for('admin_table_form', table_config_id=t.table_config_id) }}">definir escopo</a>{% endif %}</td>
-        <td style="min-width:190px">{% if t.scope_days %}{{ progress(t.done_days, t.scope_days, t.failed_days + t.unknown_days, t.inflight_days, 'dias') }}{% else %}<small class="muted">{{ t.done_days }} dias exportados</small>{% endif %}</td>
-        <td>{% if t.running or t.pending %}{{ t.running }} exec. / {{ t.pending }} pend.<br><small class="muted">{{ t.inflight_days }} dias</small>{% else %}—{% endif %}</td>
-        <td>{% if t.gap_count %}<span class="warn-text"><b>{{ t.gap_count }}</b> ({{ t.missing_days }} dias)</span>{% else %}0{% endif %}</td>
-        <td>{% if t.failed_days or t.unknown_days %}<span class="bad-text">{{ t.failed_days }}d falha</span> · <span class="warn-text">{{ t.unknown_days }}d desc.</span>{% else %}—{% endif %}</td>
-        <td>{% if t.done_outside_days %}<small class="muted">{{ t.done_outside_days }} dias</small>{% else %}—{% endif %}</td>
+        <td class="nowrap">{% if t.scope_units %}{{ scope_txt(t) }}{% if t.filter_type != 'NONE' %}<br><small class="muted">{{ t.scope_units|num }} {{ un }}</small>{% endif %}{% else %}<a href="{{ url_for('admin_table_form', table_config_id=t.table_config_id) }}">definir escopo</a>{% endif %}</td>
+        <td style="min-width:190px">{% if t.scope_units %}{{ progress(t.done_units, t.scope_units, t.failed_units + t.unknown_units, t.inflight_units, un) }}{% else %}<small class="muted">{{ t.done_units|num }} {{ un }} exportados</small>{% endif %}</td>
+        <td>{% if t.running or t.pending %}{{ t.running }} exec. / {{ t.pending }} pend.{% if t.filter_type != 'NONE' %}<br><small class="muted">{{ t.inflight_units|num }} {{ un }}</small>{% endif %}{% else %}—{% endif %}</td>
+        <td>{% if t.gap_count %}<span class="warn-text"><b>{{ t.gap_count }}</b>{% if t.filter_type != 'NONE' %} ({{ t.missing_units|num }} {{ un }}){% endif %}</span>{% else %}0{% endif %}</td>
+        <td>{% if t.failed_units or t.unknown_units %}<span class="bad-text">{{ t.failed_units|num }} falha</span> · <span class="warn-text">{{ t.unknown_units|num }} desc.</span>{% else %}—{% endif %}</td>
+        <td>{% if t.done_outside_units %}<small class="muted">{{ t.done_outside_units|num }} {{ un }}</small>{% else %}—{% endif %}</td>
         <td><small>{{ t.last_success_at|dt }}</small></td>
       </tr>
     {% else %}

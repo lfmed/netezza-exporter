@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import badge %}
+{% from "_macros.html" import badge, request_subblock %}
 {% block content %}
 <section class="head">
   <div><h1>🔎 Revisão do pedido</h1><p>Confira os períodos que serão executados e os que já foram executados</p></div></section>
@@ -21,7 +21,8 @@
   <p class="muted">Perfil <b>{{ c.call_profile }}</b> · procedure <code>{{ c.procedure_name }}</code> · versão da config {{ c.config_version }} ·
      até {{ c.max_parallel }} chamada(s) simultânea(s) nesta tabela · origem {{ c.source_id }} (limite global {{ src.max_sessions if src else '?' }}, driver <b>{{ src.driver if src else '?' }}</b>)</p>
   {% endif %}
-  <p>Solicitado: {{ r.period_start|dt }} → {{ r.period_end|dt }} · subbloco de {{ r.subblock_size }} {{ UNIT_LABEL[r.subblock_unit] }}{% if r.calendar_aligned %} (alinhado ao calendário){% endif %} ·
+  {% set ft = r.filter_type %}{% set un = UNIT_NAME[ft] %}
+  <p>{{ FILTER_TYPES[ft] }} · solicitado: {{ fx_range(ft, r.period_start, r.period_end) }} · subbloco: {{ request_subblock(r) }}{% if ft == 'DATE' and r.calendar_aligned %} (alinhado ao calendário){% endif %} ·
      <b>{{ r.blocks|length }} subbloco(s)</b></p>
   {% if r.conflicts %}
     <div class="flash error">Não é possível incluir esta tabela:
@@ -29,9 +30,9 @@
   {% endif %}
   {% if r.excluded %}
     <div class="flash warn">
-      <b>{{ r.excluded_days }} dia(s) já executados ou em execução foram excluídos do lote</b>; só o restante será enviado à procedure.
-      <table class="grid compact" style="margin-top:8px"><thead><tr><th>Período excluído</th><th>Dias</th><th>Situação</th><th>Pedido</th></tr></thead><tbody>
-      {% for x in r.excluded %}<tr><td class="nowrap">{{ x.data_ini|dt }} → {{ x.data_fim|dt }}</td><td>{{ x.days }}</td><td>{{ badge(x.status) }}</td>
+      <b>{% if ft == 'NONE' %}A tabela já foi executada ou está em execução e ficou fora do lote{% else %}{{ r.excluded_units|num }} {{ un }} já executados ou em execução foram excluídos do lote{% endif %}</b>; só o restante será enviado à procedure.
+      <table class="grid compact" style="margin-top:8px"><thead><tr><th>Faixa excluída</th><th>{{ un|capitalize }}</th><th>Situação</th><th>Pedido</th></tr></thead><tbody>
+      {% for x in r.excluded %}<tr><td class="nowrap">{{ fx_range(ft, x.data_ini, x.data_fim) }}</td><td>{{ x.units|num }}</td><td>{{ badge(x.status) }}</td>
         <td>{% if x.request_id %}<a href="{{ url_for('request_detail', request_id=x.request_id) }}">{{ x.request_name }}</a>{% else %}{{ x.request_name }}{% endif %}</td></tr>{% endfor %}
       </tbody></table>
       {% if r.excluded|selectattr('status', 'equalto', 'FAILED')|list %}<small>Períodos com <b>falha</b> continuam reservados ao pedido de origem: abra o pedido e escolha <b>repetir</b> ou <b>cancelar</b>. Depois de cancelados, eles podem entrar neste ou em outro pedido.</small><br>{% endif %}
@@ -39,20 +40,20 @@
     </div>
   {% endif %}
   {% if r.superseded %}
-    <div class="flash warn">Reprocessamento: {{ r.superseded|sum(attribute='days') }} dia(s) já concluídos serão executados de novo e os subblocos anteriores ficarão como <b>Substituído</b>.</div>
+    <div class="flash warn">Reprocessamento: {% if ft == 'NONE' %}a tabela já concluída será exportada de novo (a tabela destino é apagada antes da carga){% else %}{{ r.superseded|sum(attribute='units')|num }} {{ un }} já concluídos serão executados de novo{% endif %} e os subblocos anteriores ficarão como <b>Substituído</b>.</div>
   {% endif %}
   {% if not r.conflicts %}
     {% if r.blocks %}
-    <p><b>Períodos que serão executados:</b>
-      {% for a, b in r.pieces %}<span class="badge s-running">{{ a|dt }} → {{ b|dt }}</span> {% endfor %}</p>
+    <p><b>Faixas que serão executadas:</b>
+      {% for a, b in r.pieces %}<span class="badge s-running">{{ fx_range(ft, a, b) }}</span> {% endfor %}</p>
     {% else %}
-    <div class="flash info">Nada a executar para esta tabela: todo o período solicitado já foi executado ou está em execução. Ela será ignorada.</div>
+    <div class="flash info">Nada a executar para esta tabela: toda a faixa solicitada já foi executada ou está em execução. Ela será ignorada.</div>
     {% endif %}
   {% endif %}
   {% if r.blocks %}
-  <details {{ 'open' if r.blocks|length <= 24 }}><summary>Ver subblocos (na ordem de execução: do mais recente para o mais antigo)</summary>
-    <table class="grid compact"><thead><tr><th>#</th><th>data_ini</th><th>data_fim (inclusiva)</th><th>Chamada</th></tr></thead><tbody>
-    {% for b in (r.blocks|reverse|list)[:500] %}<tr><td>{{ b.seq }}</td><td>{{ b.start }}</td><td>{{ b.end }}</td>
+  <details {{ 'open' if r.blocks|length <= 24 }}><summary>Ver subblocos (na ordem de execução: {{ 'do maior valor para o menor' if ft == 'NUMBER' else 'do mais recente para o mais antigo' }})</summary>
+    <table class="grid compact"><thead><tr><th>#</th><th>Início</th><th>Fim (inclusivo)</th><th>Chamada</th></tr></thead><tbody>
+    {% for b in (r.blocks|reverse|list)[:500] %}<tr><td>{{ b.seq }}</td><td class="nowrap">{{ fx_value(ft, b.start) }}</td><td class="nowrap">{{ fx_value(ft, b.end) if ft != 'NONE' else '' }}</td>
       <td><code>{{ call_preview(c, src, b.start, b.end) if c else '' }}</code></td></tr>{% endfor %}
     {% if r.blocks|length > 500 %}<tr><td colspan="4" class="muted">… mais {{ r.blocks|length - 500 }}</td></tr>{% endif %}
     </tbody></table>

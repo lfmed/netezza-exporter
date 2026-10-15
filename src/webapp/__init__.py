@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, url_for
 
-from nzexport import file_format, repo, table_csv
+from nzexport import faixa, file_format, repo, table_csv
 from nzexport.planner import UNITS
 from nzexport.procedure import (DATE_FORMATS, DEFAULT_PROFILE, PROFILES, build_call, validate_destination,
                                 validate_table_config)
@@ -29,7 +29,8 @@ STATUS_LABEL = {
     "NAO_INICIADA": "Não iniciada", "COM_FALHAS": "Com falhas", "SEM_ESCOPO": "Sem escopo",
     "ESTADO_DESCONHECIDO": "Estado desconhecido", "INATIVA": "Inativa", "THIS_REQUEST": "Neste pedido",
 }
-UNIT_LABEL = {"DAY": "dia(s)", "WEEK": "semana(s)", "MONTH": "mês(es)", "YEAR": "ano(s)"}
+UNIT_LABEL = {"DAY": "dia(s)", "WEEK": "semana(s)", "MONTH": "mês(es)", "YEAR": "ano(s)",
+              "COUNT": "subbloco(s) na faixa", "WHOLE": "tabela inteira"}
 
 
 def _user() -> str:
@@ -58,28 +59,37 @@ def _int(v, default=None, lo=None, hi=None):
     return n
 
 
-def _parse_table_rows(form) -> list[repo.TableRequest]:
+def _parse_table_rows(form, cfgs: dict) -> list[repo.TableRequest]:
+    """Linhas do pedido conforme o tipo de filtro de cada tabela (cfgs: table_config_id -> cadastro atual)."""
     rows = []
     tables = form.getlist("table")
+    col = lambda k, i: (form.getlist(k)[i] if i < len(form.getlist(k)) else "")  # noqa: E731
     for i, tid in enumerate(tables):
         if not tid:
             continue
-        reprocess = form.getlist("reprocess")[i] == "1"
-        rows.append(repo.TableRequest(
-            table_config_id=tid,
-            period_start=_date(form.getlist("start")[i]),
-            period_end=_date(form.getlist("end")[i]),
-            subblock_unit=form.getlist("unit")[i] if form.getlist("unit")[i] in UNITS else "MONTH",
-            subblock_size=_int(form.getlist("size")[i], lo=1, hi=1000),
-            calendar_aligned=form.getlist("aligned")[i] == "1",
-            is_reprocess=reprocess,
-            reprocess_reason=(form.getlist("reason")[i] or "").strip() or None,
-        ))
+        ft = faixa.ftype(cfgs.get(tid))
+        common = dict(table_config_id=tid, filter_type=ft, is_reprocess=col("reprocess", i) == "1",
+                      reprocess_reason=(col("reason", i) or "").strip() or None)
+        if ft == "DATE":
+            row = repo.TableRequest(
+                period_start=_date(col("start", i)), period_end=_date(col("end", i)),
+                subblock_unit=col("unit", i) if col("unit", i) in UNITS else "MONTH",
+                subblock_size=_int(col("size", i), lo=1, hi=1000), calendar_aligned=col("aligned", i) == "1", **common)
+        elif ft == "NUMBER":
+            row = repo.TableRequest(
+                period_start=faixa.parse_int(col("start", i), f"{tid}: valor inicial"),
+                period_end=faixa.parse_int(col("end", i), f"{tid}: valor final"),
+                subblock_unit="COUNT", subblock_size=_int(col("size", i), lo=1, hi=faixa.MAX_COUNT),
+                calendar_aligned=False, **common)
+        else:
+            row = repo.TableRequest(period_start=0, period_end=0, subblock_unit="WHOLE", subblock_size=1,
+                                    calendar_aligned=False, **common)
+        rows.append(row)
     if not rows:
         raise ValueError("selecione pelo menos uma tabela")
     for r in rows:
         if r.period_start > r.period_end:
-            raise ValueError(f"{r.table_config_id}: data inicial maior que a final")
+            raise ValueError(f"{r.table_config_id}: início maior que o fim")
         if r.is_reprocess and not r.reprocess_reason:
             raise ValueError(f"{r.table_config_id}: reprocessamento exige justificativa")
     return rows
@@ -104,8 +114,10 @@ def create_app() -> Flask:
     app.jinja_env.globals.update(STATUS_LABEL=STATUS_LABEL, UNIT_LABEL=UNIT_LABEL, UNITS=UNITS,
                                   APP_VERSION=APP_VERSION, PROFILES=PROFILES, DEFAULT_PROFILE=DEFAULT_PROFILE,
                                   DATE_FORMATS=list(DATE_FORMATS), FILE_OPTIONS=file_format.FILE_OPTIONS,
-                                  CLEAN_MODES=file_format.CLEAN_MODES, DEMO_INI=date(2016, 1, 1),
-                                  DEMO_FIM=date(2016, 1, 31))
+                                  CLEAN_MODES=file_format.CLEAN_MODES, FILTER_TYPES=faixa.FILTER_TYPES,
+                                  UNIT_NAME=faixa.UNIT_NAME, fx_range=faixa.fmt_range, fx_value=faixa.fmt_value,
+                                  fx_example=lambda cfg: faixa.example(faixa.ftype(cfg)),
+                                  MAX_COUNT=faixa.MAX_COUNT)
 
     def call_preview(cfg, source, data_ini, data_fim) -> str:
         try:
@@ -182,11 +194,17 @@ def create_app() -> Flask:
     def dashboard():
         db = services.db()
         tables = repo.migration_coverage(db)
-        scoped = [t for t in tables if t["scope_days"]]
-        overall = {k: sum(t[k] for t in scoped) for k in ("scope_days", "done_days", "inflight_days",
-                                                          "failed_days", "unknown_days", "missing_days")}
-        overall["complete_tables"] = sum(1 for t in tables if t["coverage_status"] == "COMPLETA")
-        overall["tables"] = len(tables)
+        # tipos de filtro diferentes têm unidades diferentes (dias, valores, tabela): o geral é por tabela
+        scoped = [t for t in tables if t["scope_units"]]
+        overall = {
+            "tables": len(tables), "scoped": len(scoped),
+            "complete_tables": sum(1 for t in tables if t["coverage_status"] == "COMPLETA"),
+            "avg_pct": (sum(t["done_units"] / t["scope_units"] for t in scoped) / len(scoped) * 100) if scoped else 0,
+            "gaps": sum(t["gap_count"] or 0 for t in scoped),
+            "gap_tables": sum(1 for t in scoped if t["gap_count"]),
+            "problem_tables": sum(1 for t in scoped if (t["failed_units"] or 0) + (t["unknown_units"] or 0)),
+            "running_tables": sum(1 for t in scoped if t["running"] or t["pending"]),
+        }
         return render_template("dashboard.html", tables=tables, overall=overall,
                                active=repo.list_requests(db, limit=20),
                                dispatcher=repo.live_dispatcher(db),
@@ -237,10 +255,12 @@ def create_app() -> Flask:
         cov = next((t for t in repo.migration_coverage(db) if t["table_config_id"] == table_config_id), None)
         if not cov:
             abort(404)
-        reqs = db.query("""SELECT DISTINCT r.request_id, r.request_name, r.status, r.submitted_at, rt.period_start,
-                                  rt.period_end, rt.is_reprocess
-                           FROM export_request_table rt JOIN export_request r USING (request_id)
-                           WHERE rt.table_config_id = %s ORDER BY r.submitted_at DESC""", (table_config_id,))
+        reqs = repo.with_natives(db.query("""
+            SELECT DISTINCT r.request_id, r.request_name, r.status, r.submitted_at, rt.key_lo, rt.key_hi,
+                   rt.is_reprocess, v.filter_type
+            FROM export_request_table rt JOIN export_request r USING (request_id)
+            JOIN table_config_version v ON v.table_config_id = rt.table_config_id AND v.config_version = rt.config_version
+            WHERE rt.table_config_id = %s ORDER BY r.submitted_at DESC""", (table_config_id,)))
         return render_template("coverage.html", t=cov, ranges=repo.table_ranges(db, table_config_id), reqs=reqs,
                                tp=repo.table_throughput(db, table_config_id))
 
@@ -248,7 +268,7 @@ def create_app() -> Flask:
     def request_review():
         db = services.db()
         try:
-            rows = _parse_table_rows(request.form)
+            rows = _parse_table_rows(request.form, {t["table_config_id"]: t for t in repo.list_tables(db)})
             max_parallel = _int(request.form.get("max_parallel"), lo=1, hi=200)
             reviewed = repo.review(db, rows)
         except ValueError as e:
@@ -266,7 +286,7 @@ def create_app() -> Flask:
     def request_create():
         db = services.db()
         try:
-            rows = _parse_table_rows(request.form)
+            rows = _parse_table_rows(request.form, {t["table_config_id"]: t for t in repo.list_tables(db)})
             scheduled = _local_dt(request.form.get("scheduled_start_at"))
             if scheduled and scheduled <= datetime.now(timezone.utc):
                 raise ValueError("o início agendado precisa ser no futuro (deixe em branco para iniciar já)")
@@ -409,9 +429,7 @@ def create_app() -> Flask:
     @app.get("/subblocks/<subblock_id>")
     def subblock_detail(subblock_id):
         db = services.db()
-        sb = db.one("""SELECT s.*, lower(s.data_range) data_ini, upper(s.data_range) - 1 data_fim, r.request_name
-                       FROM export_subblock s JOIN export_request r USING (request_id)
-                       WHERE subblock_id = %s""", (subblock_id,))
+        sb = repo.get_subblock(db, subblock_id)
         if not sb:
             abort(404)
         return render_template("subblock.html", sb=sb, attempts=repo.subblock_attempts(db, subblock_id),
@@ -528,7 +546,11 @@ def create_app() -> Flask:
         versions = db.query("SELECT * FROM table_config_version WHERE table_config_id = %s ORDER BY config_version DESC",
                             (table_config_id,)) if table_config_id else []
         return render_template("admin_table_form.html", t=t, is_new=t is None, sources=repo.list_sources(db),
-                               versions=versions)
+                               versions=versions, locked_filter=_has_subblocks(db, table_config_id))
+
+    def _has_subblocks(db, table_config_id) -> bool:
+        return bool(table_config_id and db.one("SELECT 1 AS x FROM export_subblock WHERE table_config_id = %s LIMIT 1",
+                                               (table_config_id,)))
 
     @app.post("/admin/tables")
     def admin_table_save():
@@ -538,21 +560,30 @@ def create_app() -> Flask:
             tid = f["table_config_id"].strip().upper()
             if not tid:
                 raise ValueError("identificador obrigatório")
-            mig_start = _date(f["migration_start"]) if f.get("migration_start") else None
-            mig_end = _date(f["migration_end"]) if f.get("migration_end") else None
+            ft = faixa.ftype({"filter_type": f.get("filter_type")})
+            mig_start = _date(f["migration_start"]) if ft == "DATE" and f.get("migration_start") else None
+            mig_end = _date(f["migration_end"]) if ft == "DATE" and f.get("migration_end") else None
             if mig_start and mig_end and mig_start > mig_end:
                 raise ValueError("início do escopo maior que o fim")
+            num = lambda k, rot: faixa.parse_int(f[k], rot) if ft == "NUMBER" and (f.get(k) or "").strip() else None  # noqa: E731
+            num_min, num_max = num("scope_num_min", "valor mínimo"), num("scope_num_max", "valor máximo")
+            if num_min is not None and num_max is not None and num_min > num_max:
+                raise ValueError("valor mínimo do escopo maior que o máximo")
+            if ft == "NUMBER" and not (f.get("time_column") or "").strip():
+                raise ValueError("o filtro numérico exige a coluna do filtro (p_NomeColunaTempo)")
             fields = dict(
+                filter_type=ft, scope_num_min=num_min, scope_num_max=num_max,
+                default_subblock_count=_int(f.get("default_subblock_count"), 10, 1, faixa.MAX_COUNT),
                 call_profile=f.get("call_profile") or DEFAULT_PROFILE,
                 source_database=(f.get("source_database") or "").strip().upper() or None,
                 ext_database=(f.get("ext_database") or "").strip().upper() or None,
                 ext_schema=(f.get("ext_schema") or "").strip().upper() or None,
-                time_column=(f.get("time_column") or "").strip().upper() or None,
+                time_column=((f.get("time_column") or "").strip().upper() or None) if ft != "NONE" else None,
                 file_options=file_format.clean({k: f.get(f"fo_{k}") for k in file_format.FILE_OPTIONS}),
                 dest_catalog=(f.get("dest_catalog") or "").strip() or None,
                 dest_schema=(f.get("dest_schema") or "").strip() or None,
                 dest_table=(f.get("dest_table") or "").strip() or None,
-                date_format=f.get("date_format") or "YYYYMMDD",
+                date_format="YYYYMMDD",   # Data: sempre ano, mês e dia sem separador
                 source_table=f["source_table"].strip().upper(), procedure_name=f["procedure_name"].strip().upper(),
                 default_subblock_unit=f["default_subblock_unit"],
                 default_subblock_size=_int(f["default_subblock_size"], lo=1),
@@ -579,7 +610,8 @@ def create_app() -> Flask:
             for k in ("default_subblock_size", "max_parallel", "call_timeout_min", "max_retries"):
                 t[k] = f.get(k)
             return render_template("admin_table_form.html", t=t, is_new=existing is None,
-                                   sources=repo.list_sources(db), versions=[]), 400
+                                   sources=repo.list_sources(db), versions=[],
+                                   locked_filter=_has_subblocks(db, tid if existing else None)), 400
         return redirect(url_for("admin"))
 
     # ------------------------------------------------------------ carga de tabelas via CSV

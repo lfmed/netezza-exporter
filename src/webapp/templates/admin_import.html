@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import badge %}
+{% from "_macros.html" import badge, scope_txt, default_subblock %}
 {% set n_err = rows|selectattr('action', 'equalto', 'ERRO')|list|length %}
 {% set n_new = rows|selectattr('action', 'equalto', 'NOVA')|list|length %}
 {% set n_ver = rows|selectattr('action', 'equalto', 'NOVA_VERSAO')|list|length %}
@@ -28,8 +28,8 @@
         <td>
           {% if r.errors %}<ul class="bad-text" style="margin:0;padding-left:18px">{% for e in r.errors %}<li>{{ e }}</li>{% endfor %}</ul>
           {% elif r.changes %}{% for c in r.changes %}<small><code>{{ c.field }}</code>: {{ c.old if c.old is not none else '—' }} → <b>{{ c.new if c.new is not none else '—' }}</b></small><br>{% endfor %}
-          {% elif r.action == 'NOVA' %}<small class="muted"><code>{{ r.values.procedure_name }}</code> · subbloco {{ r.values.default_subblock_size }} {{ UNIT_LABEL[r.values.default_subblock_unit] }} · até {{ r.values.max_parallel }} simultânea(s)
-            {% if r.values.migration_start %}· escopo {{ r.values.migration_start|dt }} → {{ r.values.migration_end|dt }}{% else %}· <span class="warn-text">sem escopo</span>{% endif %}</small>
+          {% elif r.action == 'NOVA' %}<small class="muted"><code>{{ r.values.procedure_name }}</code> · {{ FILTER_TYPES.get(r.values.filter_type or 'DATE') }} · subbloco {{ default_subblock(r.values) }} · até {{ r.values.max_parallel }} simultânea(s)
+            · escopo {{ scope_txt(r.values) }}</small>
           {% else %}<small class="muted">igual à versão atual</small>{% endif %}
         </td>
       </tr>

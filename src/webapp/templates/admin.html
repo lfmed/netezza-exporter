@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import scope_txt, default_subblock, filter_badge %}
 {% block content %}
 <section class="head">
   <div><h1>⚙️ Administração</h1><p>Origens Netezza, tabelas exportáveis e hooks pós-exportação</p></div></section>
@@ -50,13 +51,13 @@
   <table class="grid">
     <thead><tr><th>ID</th><th>Ativa</th><th>Chamada</th><th>Destino (Databricks)</th><th>Subbloco padrão</th><th>Máx. paralelo</th><th>Timeout</th><th>Retries</th><th>Escopo da migração</th><th>Versão</th></tr></thead>
     <tbody>{% for t in tables %}
-      <tr><td><a href="{{ url_for('admin_table_form', table_config_id=t.table_config_id) }}"><b>{{ t.table_config_id }}</b></a></td>
+      <tr><td><a href="{{ url_for('admin_table_form', table_config_id=t.table_config_id) }}"><b>{{ t.table_config_id }}</b></a><br>{{ filter_badge(t) }}</td>
         <td>{{ 'Sim' if t.active else 'Não' }}</td>
-        <td><code style="white-space:normal;word-break:break-all">{{ call_preview(t, (sources|selectattr('source_id', 'equalto', t.source_id)|list or [none])[0], DEMO_INI, DEMO_FIM) }}</code></td>
+        <td><code style="white-space:normal;word-break:break-all">{% set ex = fx_example(t) %}{{ call_preview(t, (sources|selectattr('source_id', 'equalto', t.source_id)|list or [none])[0], ex[0], ex[1]) }}</code></td>
         <td>{% if t.dest_table %}<code>{{ t.dest_catalog }}.{{ t.dest_schema }}.{{ t.dest_table }}</code>{% else %}<span class="warn-text">não definido</span>{% endif %}</td>
-        <td>{{ t.default_subblock_size }} {{ UNIT_LABEL[t.default_subblock_unit] }}</td><td>{{ t.max_parallel }}</td>
+        <td>{{ default_subblock(t) }}</td><td>{{ t.max_parallel }}</td>
         <td>{{ t.call_timeout_min }} min</td><td>{{ t.max_retries }}{% if t.retry_unknown %} (+desconhecidos){% endif %}</td>
-        <td class="nowrap">{% if t.migration_start %}{{ t.migration_start|dt }} → {{ t.migration_end|dt }}{% else %}<span class="warn-text">não definido</span>{% endif %}</td>
+        <td class="nowrap">{{ scope_txt(t) }}</td>
         <td>v{{ t.current_version }}</td></tr>
     {% else %}<tr><td colspan="10" class="empty">Nenhuma tabela.</td></tr>{% endfor %}</tbody>
   </table>

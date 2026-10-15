@@ -10,3 +10,30 @@
 </div>
 <small class="muted">{{ done }}/{{ total }} {{ unit }} ({{ done|pct(total) }}%)</small>
 {%- endmacro %}
+
+{# Escopo da migração conforme o tipo de filtro da tabela (Data, Número ou Sem filtro) #}
+{% macro scope_txt(t) -%}
+{%- set ft = t.filter_type or 'DATE' -%}
+{%- if ft == 'NONE' %}tabela inteira
+{%- elif ft == 'NUMBER' and t.scope_num_min is not none and t.scope_num_max is not none %}{{ fx_range(ft, t.scope_num_min, t.scope_num_max) }}
+{%- elif ft == 'DATE' and t.migration_start %}{{ fx_range(ft, t.migration_start, t.migration_end) }}
+{%- else %}<span class="warn-text">não definido</span>{% endif %}
+{%- endmacro %}
+
+{% macro default_subblock(t) -%}
+{%- set ft = t.filter_type or 'DATE' -%}
+{%- if ft == 'NONE' %}1 chamada (tabela inteira)
+{%- elif ft == 'NUMBER' %}{{ t.default_subblock_count }} subbloco(s) no escopo
+{%- else %}{{ t.default_subblock_size }} {{ UNIT_LABEL[t.default_subblock_unit] }}{% endif %}
+{%- endmacro %}
+
+{# Subbloco usado numa linha do pedido (unidade de calendário, quantidade ou tabela inteira) #}
+{% macro request_subblock(r) -%}
+{%- if r.subblock_unit == 'WHOLE' %}tabela inteira
+{%- elif r.subblock_unit == 'COUNT' %}{{ r.subblock_size }} subbloco(s) na faixa
+{%- else %}{{ r.subblock_size }} {{ UNIT_LABEL[r.subblock_unit] }}{% endif %}
+{%- endmacro %}
+
+{% macro filter_badge(t) -%}
+<small class="muted">{{ FILTER_TYPES.get(t.filter_type or 'DATE') }}</small>
+{%- endmacro %}

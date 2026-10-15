@@ -8,7 +8,9 @@
 <div class="cols">
 <div class="card"><dl class="kv">
   <dt>Status</dt><dd>{{ badge(sb.status) }}</dd>
-  <dt>data_ini</dt><dd>{{ sb.data_ini }}</dd><dt>data_fim (inclusiva)</dt><dd>{{ sb.data_fim }}</dd>
+  <dt>Tipo de filtro</dt><dd>{{ FILTER_TYPES[sb.filter_type] }}</dd>
+  {% if sb.filter_type == 'NONE' %}<dt>Faixa</dt><dd>tabela inteira</dd>
+  {% else %}<dt>Início</dt><dd>{{ fx_value(sb.filter_type, sb.data_ini) }}</dd><dt>Fim (inclusivo)</dt><dd>{{ fx_value(sb.filter_type, sb.data_fim) }}</dd>{% endif %}
   <dt>Tentativas</dt><dd>{{ sb.attempts }}</dd>
   <dt>Lease</dt><dd>{{ sb.lease_owner or '—' }} {% if sb.lease_expires_at %}até {{ sb.lease_expires_at|dt }}{% endif %}</dd>
   {% if sb.file_name %}<dt>Arquivo</dt><dd><code>{{ sb.file_name }}</code></dd>{% endif %}

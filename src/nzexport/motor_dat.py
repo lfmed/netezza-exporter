@@ -453,11 +453,13 @@ def ja_carregado(meta, tag: str):
 
 
 def limpar_periodo(meta, ini: str, fim: str) -> int:
-    """Remove do destino as linhas do período do subbloco (o app garante que o período é só dele)."""
-    if not meta.get("col_tempo"):
+    """Remove do destino as linhas do período do subbloco (o app garante que o período é só dele).
+    Sem filtro: o destino é exclusivo da tabela, então apaga tudo (recarga total)."""
+    filtro = meta.get("filtro") or "DATE"
+    if filtro != "NONE" and not meta.get("col_tempo"):
         raise ErroCarga("ERRO_CADASTRO", "sem coluna de tempo: não é possível limpar o período no destino", mover=False)
     try:
-        pred = predicado_periodo(meta["col_tempo"], meta["tipo_tempo"], ini, fim)
+        pred = predicado_periodo(meta.get("col_tempo"), meta.get("tipo_tempo"), ini, fim, filtro)
     except ValueError as e:
         raise ErroCarga("ERRO_CADASTRO", str(e), mover=False)
     r = CTX["spark"].sql(f"DELETE FROM {meta['tabela']} WHERE {pred}").first()
