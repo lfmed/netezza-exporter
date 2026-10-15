@@ -73,10 +73,18 @@ def main():
         rel.add(OK, "service principal do app", f"{app.service_principal_name} ({app_sp})")
     except Exception as e:  # noqa: BLE001
         rel.add(ERRO, "service principal do app", f"app {a.app_name} não encontrado: {e}", "deploy do bundle")
-    cfg = LakebaseConfig(endpoint=a.endpoint, database=a.database, w=w)
+    try:
+        cfg = LakebaseConfig(endpoint=a.endpoint, database=a.database, w=w)
+    except Exception as e:  # noqa: BLE001 - ex.: lakebase_endpoint com o host no lugar do caminho do endpoint
+        rel.add(ERRO, "banco do app (Lakebase)", str(e)[:600],
+                "variável lakebase_endpoint do target no databricks.yml (caminho do endpoint, não o host)")
+        encerrar(rel)
+    if cfg.endpoint != a.endpoint:
+        rel.add(AVISO, "lakebase_endpoint", f"recebido o host {a.endpoint!r}; endpoint encontrado: {cfg.endpoint}",
+                f"targets.<alvo>.variables.lakebase_endpoint: {cfg.endpoint} (o app e os jobs usam a mesma variável)")
     try:
         migrate.run(cfg, grant_to=[app_sp] if app_sp else [])
-        rel.add(OK, "banco do app (Lakebase)", f"schema nzexport migrado em {a.endpoint}"
+        rel.add(OK, "banco do app (Lakebase)", f"schema nzexport migrado em {cfg.endpoint}"
                 + (f"; acesso concedido a {app_sp}" if app_sp else ""))
         with cfg.connect() as c:
             tem_role = app_sp and c.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (app_sp,)).fetchone()
@@ -122,6 +130,10 @@ def main():
         guardar(db, rel, a.run_id)
         db.close()
 
+    encerrar(rel)
+
+
+def encerrar(rel):
     print(f"\nResumo: {sum(i['nivel'] == OK for i in rel.itens)} OK · "
           f"{sum(i['nivel'] == AVISO for i in rel.itens)} aviso(s) · {len(rel.erros)} erro(s)")
     if rel.erros:

@@ -68,6 +68,8 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
   `webapp/catalog.py`: navegador do UC (cache de 60 s).
 - `nzexport/db.py`: pool psycopg com token OAuth (`generate_database_credential`), `tx()`/`query()`/`one()`. Para um
   UPDATE use `tx()`, não `query()`.
+  `resolve_endpoint`: `lakebase_endpoint` é o caminho `projects/.../endpoints/primary`; se vier o host
+  (`ep-....database...com[/banco]`, erro real do cliente em 2026-10-15), procura o endpoint pelo host.
 - `nzexport/schema.sql`: migrações idempotentes, aplicadas por `migrate.py` (no pós-deploy ou por
   `scripts/migrate_local.py`). Para mudar as colunas de uma view, faça `DROP VIEW` e depois `CREATE`.
 - `nzexport/faixa.py` (v1.010): tipo de filtro `DATE`/`NUMBER`/`NONE` e a faixa genérica. Valores nativos: date, int
@@ -128,4 +130,4 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
 0.999 chamada da `SP_CARGA_EVENTUAL` · 1.000 tela de conexão Netezza · 1.001 remove simulação · 1.002 destino UC com
 navegador · 1.003 landing e formato do arquivo · 1.004 job importador · 1.005 deploy repetível (targets, pós-deploy,
 secret scope) · 1.006 vazão (reg/s) por subbloco, tabela e histórica · 1.007 host/porta no secret scope · 1.008 app só
-lê o scope · 1.009 política de serverless do app · 1.010 tipo de filtro (Data, Número, Sem filtro).
+lê o scope · 1.009 política de serverless do app · 1.010 tipo de filtro (Data, Número, Sem filtro) · 1.011 `lakebase_endpoint` aceita o host.

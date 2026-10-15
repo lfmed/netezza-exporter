@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.011 — 2026-10-15
+- lakebase_endpoint aceita também o host do Postgres (ep-....database...com, com /banco ou URL postgresql://) e encontra o endpoint pelo host; o pós-deploy não quebra mais com NotFound 'GET /postgres/ep-...': mostra o caminho certo (projects/<projeto>/branches/production/endpoints/primary) como aviso ou erro claro; descrição da variável e DEPLOY.md explicam o formato.
+
 ## 1.010 — 2026-10-15
 - Tipo de filtro no cadastro da tabela: Data (AAAAMMDD, subbloco por calendário), Número (coluna inteira, escopo mínimo-máximo dividido numa quantidade de subblocos, maior valor primeiro, limpeza BETWEEN no destino) e Sem filtro (tabela inteira numa chamada com filtro sempre verdadeiro '1','1','1', .dat <TABELA>_1_1.dat, DELETE total do destino em reprocesso/erro). Faixa genérica int8range (key_range) no lugar de data_range, com migração; cobertura em unidades; tipo travado quando há subblocos; telas, pedido, revisão, CSV (filter_type, scope_min/max, default_subblock_count) e pós-deploy (coluna do filtro no destino) por tipo; opção YYYY-MM-DD removida.
 

@@ -37,6 +37,12 @@ Em `databricks.yml`, preencha o target (`hml` ou `prd`):
 | `serverless_policy_id` | `79898ab9-...` | política de serverless (budget policy) do app; vazio = padrão do workspace |
 | `dest_catalogs` | `migracao` (vírgula para vários) | catálogos que o app navega (`BROWSE`) |
 
+> `lakebase_endpoint` é o **caminho do endpoint** (`projects/<projeto>/branches/production/endpoints/primary`), não o host
+> `ep-....database.<região>.cloud.databricks.com/databricks_postgres`. Para ver o caminho:
+> `databricks postgres list-endpoints projects/<projeto>/branches/production` (campo `name`). Desde a v1.011 o app aceita
+> também o host e procura o endpoint correspondente; o pós-deploy avisa e mostra o caminho a colocar no target.
+> Antes disso, o host gerava `NotFound: No API found for 'GET /postgres/ep-...'`.
+
 No CI/CD, qualquer variável pode vir de `BUNDLE_VAR_<nome>` (por exemplo, `BUNDLE_VAR_svc_hash`).
 
 ## 3. Deploy (todo deploy, sempre nesta ordem)

@@ -1,5 +1,6 @@
 """Conexão com o Lakebase (Postgres) usando token OAuth renovado automaticamente."""
 import os
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -11,6 +12,34 @@ from databricks.sdk import WorkspaceClient
 
 SCHEMA = "nzexport"
 _TOKEN_TTL_S = 40 * 60
+_ENDPOINT_PATH = re.compile(r"^projects/[^/]+/branches/[^/]+/endpoints/[^/]+$")
+_FORMATO = "projects/<projeto>/branches/production/endpoints/primary"
+
+
+def resolve_endpoint(w: WorkspaceClient, value: str) -> tuple[str, str | None, str | None]:
+    """Endpoint do Lakebase a partir de `lakebase_endpoint`.
+
+    Aceita o caminho do recurso (projects/<projeto>/branches/<branch>/endpoints/<endpoint>) e, como alternativa,
+    o host do Postgres (ep-....database.<região>.cloud.databricks.com), com ou sem /<banco> ou como URL
+    postgresql://: nesse caso procura o endpoint com esse host. Retorna (caminho do endpoint, host, banco).
+    """
+    v = (value or "").strip().rstrip("/")
+    if _ENDPOINT_PATH.match(v):
+        return v, None, None
+    if not v or v.startswith("projects/"):
+        raise ValueError(f"lakebase_endpoint {value!r} incompleto: use {_FORMATO}")
+    rest = re.sub(r"^[a-z]+://", "", v).split("@")[-1].split("?")[0]
+    host, _, database = rest.partition("/")
+    host = host.split(":")[0].lower()
+    for p in w.postgres.list_projects():
+        for b in w.postgres.list_branches(parent=p.name):
+            for e in w.postgres.list_endpoints(parent=b.name):
+                h = e.status.hosts.host if e.status and e.status.hosts else None
+                if h and h.lower() == host:
+                    return e.name, h, database or None
+    raise ValueError(f"lakebase_endpoint {value!r} não é o caminho de um endpoint e nenhum endpoint do Lakebase "
+                     f"visível para esta identidade tem o host {host!r}. Use {_FORMATO} "
+                     f"(databricks postgres list-endpoints projects/<projeto>/branches/production)")
 
 
 class _TokenProvider:
@@ -36,9 +65,9 @@ class LakebaseConfig:
     def __init__(self, endpoint: str | None = None, database: str | None = None,
                  w: WorkspaceClient | None = None):
         self.w = w or WorkspaceClient()
-        self.endpoint = endpoint or os.environ["LAKEBASE_ENDPOINT"]
-        self.database = database or os.environ.get("PGDATABASE", "databricks_postgres")
-        self.host = os.environ.get("PGHOST") or self.w.postgres.get_endpoint(name=self.endpoint).status.hosts.host
+        self.endpoint, host, db = resolve_endpoint(self.w, endpoint or os.environ["LAKEBASE_ENDPOINT"])
+        self.database = database or os.environ.get("PGDATABASE") or db or "databricks_postgres"
+        self.host = os.environ.get("PGHOST") or host or self.w.postgres.get_endpoint(name=self.endpoint).status.hosts.host
         self.user = os.environ.get("PGUSER") or self._default_user()
         self.port = int(os.environ.get("PGPORT", "5432"))
         self.tokens = _TokenProvider(self.w, self.endpoint)

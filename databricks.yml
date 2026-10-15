@@ -12,7 +12,9 @@ variables:
     description: ID do projeto Lakebase (Postgres) que guarda pedidos, subblocos e configuração do app
     default: netezza-exporter
   lakebase_endpoint:
-    description: Endpoint read-write do branch production do projeto Lakebase
+    description: >-
+      Caminho do endpoint read-write do Lakebase (projects/<projeto>/branches/production/endpoints/primary), não o host
+      ep-....database...com. Veja com databricks postgres list-endpoints projects/<projeto>/branches/production.
     default: projects/netezza-exporter/branches/production/endpoints/primary
   secret_scope:
     description: Secret scope já existente no ambiente com host, porta, usuário e senha do Netezza (app e jobs só leem). Nunca coloque o valor aqui.
