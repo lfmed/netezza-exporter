@@ -60,15 +60,6 @@ def ensure_dispatcher(force: bool = False) -> int | None:
 SECRET_SCOPE = os.environ.get("NETEZZA_SECRET_SCOPE", "nzexport-netezza")
 
 
-def put_credentials(source_id: str, user: str | None, password: str | None):
-    """Grava usuário/senha no secret scope (o app nunca guarda nem exibe as credenciais)."""
-    w = workspace()
-    if user:
-        w.secrets.put_secret(scope=SECRET_SCOPE, key=f"{source_id}-user", string_value=user)
-    if password:
-        w.secrets.put_secret(scope=SECRET_SCOPE, key=f"{source_id}-password", string_value=password)
-
-
 def credentials_present(source_id: str) -> dict:
     try:
         keys = {s.key for s in workspace().secrets.list_secrets(scope=SECRET_SCOPE)}

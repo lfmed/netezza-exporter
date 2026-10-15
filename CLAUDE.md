@@ -21,7 +21,8 @@ Documentos: `README.md` (operação), `DEPLOY.md` (deploy no cliente), `CHANGELO
   `src/VERSION` e `CHANGELOG.md`), deploy, commit `vX.XXX: ...`, `git tag -a vX.XXX`, `git push --follow-tags` no repo
   **privado** `lfmed/netezza-exporter` (conta gh `lfmed`). Não agrupe ajustes pedidos separadamente.
 - **Sem simulação**: o driver fake e os dados simulados foram removidos na v1.001. Não reintroduza.
-- **Credenciais nunca no Git**: o usuário e a senha do Netezza ficam só no secret scope (gravados pelo app ou pelo CI).
+- **Credenciais nunca no Git**: host, porta, usuário e senha do Netezza ficam só no secret scope, que já existe no ambiente.
+  O app e os jobs só **leem** (READ). Nada de WRITE/MANAGE para o app, e o scope não é recurso do bundle (v1.008).
 - **Escopo da SP**: o app só **chama** a SP e passa os parâmetros. O controle interno é da SP (não alterar a procedure
   nem recriar a external table).
 - **Dados**: só append, **sem validação de range ou conteúdo**. O app garante os subblocos.
@@ -39,7 +40,7 @@ Documentos: `README.md` (operação), `DEPLOY.md` (deploy no cliente), `CHANGELO
 | Lakebase | projeto `netezza-exporter`, branch `production`, endpoint `projects/netezza-exporter/branches/production/endpoints/primary`, schema `nzexport` |
 | Backup Lakebase | branch `backup-antes-remover-simulacao` (sem expiração; apagar só se o usuário pedir) |
 | Jobs | dispatcher `65950468575247`, importer `1045038738828699`, conn_test `1073163387876744`, pos_deploy (criado pelo bundle) |
-| Secret scope | `nzexport-netezza`, chaves `<source_id>-host` / `-port` (só leitura no app, URL exibida) e `-user` / `-password` (conexão padrão `netezza`) |
+| Secret scope | `nzexport-netezza`, chaves `<source_id>-host` / `-port` (URL exibida) e `-user` / `-password`; app com READ (conexão padrão `netezza`) |
 | Catálogo dev | `stable_classic_pg4xe1_catalog`; warehouse para testes `9981e1dca61efe86` |
 | Health | `GET /api/health` → `{"ok":true,"version":"..."}` (`/healthz` é interceptado pela plataforma) |
 
@@ -53,9 +54,9 @@ databricks bundle run nzexport_pos_deploy -t dev --profile fe-vm-stable-classic-
 databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
 ```
 - Não existe `src/app.yaml`: a configuração do app fica em `databricks.yml` (`config.command`/`env` + `value_from`).
-- O projeto Lakebase e o secret scope são recursos do bundle com `prevent_destroy`. Em dev já foram vinculados
-  (`bundle deployment bind nzexport_lakebase projects/netezza-exporter` e `bind netezza nzexport-netezza`).
-- Resultado esperado hoje do pós-deploy: 5 OK e 2 avisos (credenciais e landing ainda não configuradas).
+- O projeto Lakebase é recurso do bundle com `prevent_destroy`; em dev foi vinculado
+  (`bundle deployment bind nzexport_lakebase projects/netezza-exporter`). O secret scope saiu do bundle na v1.008.
+- Resultado esperado hoje do pós-deploy: sem erros; avisos de host, credenciais e landing ainda não configurados.
 - Para ver as páginas via HTTP: token de `databricks auth token --profile ...` como Bearer.
 
 ## Arquitetura (src/)

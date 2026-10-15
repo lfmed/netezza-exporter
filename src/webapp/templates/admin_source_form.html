@@ -20,9 +20,6 @@
     <p><span class="muted">URL de conexão</span><br>
       {% if conn_url and conn_url.url %}<code>{{ conn_url.url }}</code>
       {% else %}<span class="badge s-failed">host não definido</span>{% endif %}</p>
-    <p class="hint">Host e porta ficam no secret scope <code>{{ secret_scope }}</code> e não são editáveis no app. Para definir ou trocar:<br>
-      <code>databricks secrets put-secret {{ secret_scope }} {{ s.source_id if s else '&lt;identificador&gt;' }}-host</code><br>
-      <code>databricks secrets put-secret {{ secret_scope }} {{ s.source_id if s else '&lt;identificador&gt;' }}-port</code> (opcional, padrão 5480)</p>
     <div class="row">
       <label>Banco da sessão<input name="database" value="{{ s.database or '' if s else '' }}" placeholder="SYSTEM"></label>
     </div>
@@ -36,19 +33,23 @@
   </div>
 
   <div class="card">
-    <h2>Credenciais</h2>
+    <h2>Secret scope</h2>
+    {% set sid = s.source_id if s else '&lt;identificador&gt;' %}
     {% if s %}
     <p style="margin-top:0">
-      {% if creds.error %}<span class="badge s-unknown">não foi possível verificar o secret scope</span>
-      {% elif creds.user and creds.password %}<span class="badge s-done">usuário e senha definidos</span>
-      {% else %}<span class="badge s-failed">credenciais incompletas</span>{% endif %}
-      {% if s.credentials_set_at %}<br><small class="muted">última alteração {{ s.credentials_set_at|dt }} por {{ s.credentials_set_by }}</small>{% endif %}
+      {% if creds.error %}<span class="badge s-unknown">sem acesso de leitura ao secret scope</span>
+      {% else %}
+        {% for k, rot in (('host', 'host'), ('port', 'porta'), ('user', 'usuário'), ('password', 'senha')) %}
+        {% if creds[k] %}<span class="badge s-done">{{ rot }} definido{{ 'a' if k in ('port', 'password') }}</span>
+        {% elif k == 'port' %}<span class="badge s-pending">porta padrão 5480</span>
+        {% else %}<span class="badge s-failed">{{ rot }} ausente</span>{% endif %}
+        {% endfor %}
+      {% endif %}
     </p>
     {% endif %}
-    <label>Usuário<input name="nz_user" autocomplete="off" placeholder="{{ 'em branco = manter o atual' if s else 'usuário do Netezza' }}"></label>
-    <label style="margin-top:10px">Senha<input type="password" name="nz_password" autocomplete="new-password" placeholder="{{ 'em branco = manter a atual' if s else '' }}"></label>
-    <p class="hint">Gravados no secret scope <code>{{ s.secret_scope if s and s.secret_scope else 'nzexport-netezza' }}</code> do Databricks.
-      O app nunca guarda credenciais no banco nem as exibe depois de salvas.</p>
+    <p class="hint">Host, porta, usuário e senha do Netezza ficam no secret scope <code>{{ secret_scope }}</code>, que já existe no ambiente.
+      O app só <b>lê</b> o scope: não grava nem exibe as credenciais. Quem administra o scope grava as chaves
+      <code>{{ sid|safe }}-host</code>, <code>{{ sid|safe }}-port</code> (opcional), <code>{{ sid|safe }}-user</code> e <code>{{ sid|safe }}-password</code>.</p>
   </div>
 </div>
 

@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.008 — 2026-10-15
+- App só lê o secret scope do Netezza, que já existe no ambiente: sai a edição de usuário e senha (status host/porta/usuário/senha só leitura); o scope deixa de ser recurso do bundle (sem MANAGE para grupo, sem grupo_owner); o pós-deploy só confere a leitura (jobs e app) e não altera ACLs; colunas credentials_set_* removidas.
+
 ## 1.007 — 2026-10-15
 - Host e porta do Netezza movidos para o secret scope (chaves <id>-host e <id>-port, porta opcional com padrão 5480): saem do banco e da tela; a tela da conexão e a Administração mostram só a URL de conexão (jdbc:netezza://host:porta/banco), sem editar; o pós-deploy confere o host no scope.
 

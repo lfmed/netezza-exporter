@@ -105,7 +105,8 @@ Desenvolvimento:
 1. Em **🔌 Conexão Netezza**, informe:
    - banco da sessão, TLS, timeout e limite global de sessões. **Host e porta** ficam só no secret scope
      (chaves `<id>-host` e `<id>-port`, padrão 5480). A tela mostra a URL de conexão, sem editar;
-   - **usuário e senha**, que são gravados no secret scope `nzexport-netezza` e nunca no banco do app;
+   - **usuário e senha** também ficam só no secret scope `nzexport-netezza`, que já existe no ambiente. O app só lê o scope
+     (READ) e mostra se as chaves existem; quem administra o scope grava os valores;
    - os **padrões** de `p_banco`, `p_banco_ext_table` e `p_esquema_ext_table`.
 2. Clique em **Testar conexão**. O teste roda como Job serverless, pela mesma rede (NCC) do dispatcher, e:
    - autentica;

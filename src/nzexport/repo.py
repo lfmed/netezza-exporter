@@ -49,8 +49,7 @@ def get_source(db: Database, source_id: str):
     return db.one("SELECT * FROM source_connection WHERE source_id = %s", (source_id,))
 
 
-def save_connection(db: Database, actor: str, source_id: str, fields: dict, secret_scope: str | None = None,
-                    credentials_changed: bool = False):
+def save_connection(db: Database, actor: str, source_id: str, fields: dict, secret_scope: str | None = None):
     """Grava os parâmetros da conexão (host, porta, usuário e senha ficam no secret scope)."""
     vals = [fields.get(f) for f in CONNECTION_FIELDS]
     with db.tx() as conn:
@@ -61,13 +60,9 @@ def save_connection(db: Database, actor: str, source_id: str, fields: dict, secr
               secret_scope = coalesce(EXCLUDED.secret_scope, source_connection.secret_scope),
               updated_by = EXCLUDED.updated_by, updated_at = now()""",
             (source_id, *vals, secret_scope, actor))
-        if credentials_changed:
-            conn.execute("""UPDATE source_connection SET credentials_set_at = now(), credentials_set_by = %s
-                            WHERE source_id = %s""", (actor, source_id))
         log_event(conn, None, "CONNECTION_SAVED", actor,
                   {"source_id": source_id, "driver": fields.get("driver"),
-                   "database": fields.get("database"), "max_sessions": fields.get("max_sessions"),
-                   "credentials_changed": credentials_changed})
+                   "database": fields.get("database"), "max_sessions": fields.get("max_sessions")})
 
 
 def create_connection_test(db: Database, source_id: str, actor: str) -> str:

@@ -34,7 +34,7 @@ ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS security_level int NOT NU
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS default_source_database text;  -- padrão de p_banco
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS default_ext_database text;     -- padrão de p_banco_ext_table
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS default_ext_schema text;       -- padrão de p_esquema_ext_table
-ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS credentials_set_at timestamptz;
+ALTER TABLE source_connection DROP COLUMN IF EXISTS credentials_set_at;  -- o app só lê o secret scope
 -- Landing: onde o datasource do Netezza (PLH_DATASOURCE_DWA) grava os .dat e de onde o importador lê
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS landing_root text;          -- s3://bucket/prefixo ou /Volumes/...
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS landing_dat_folder text NOT NULL DEFAULT 'tmp';
@@ -42,7 +42,7 @@ ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS landing_error_folder text
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS landing_work_folder text NOT NULL DEFAULT 'limpeza';
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS max_imports int NOT NULL DEFAULT 4;
 ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS file_wait_min int NOT NULL DEFAULT 10;
-ALTER TABLE source_connection ADD COLUMN IF NOT EXISTS credentials_set_by text;
+ALTER TABLE source_connection DROP COLUMN IF EXISTS credentials_set_by;
 
 CREATE TABLE IF NOT EXISTS table_config (
   table_config_id  text PRIMARY KEY,   -- nome lógico exibido no app

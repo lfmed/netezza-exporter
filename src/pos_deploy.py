@@ -2,11 +2,11 @@
 
 1. migra o banco do app (Lakebase) com a identidade dos jobs (dona do schema);
 2. descobre o service principal do app e dá a ele acesso ao schema;
-3. ACLs do secret scope do Netezza: WRITE para o app (grava as credenciais) e READ para a identidade dos jobs;
+3. secret scope do Netezza (já existe no ambiente): confere que app e jobs conseguem LER; não altera ACLs;
 4. BROWSE nos catálogos de destino para o app (navegador do catálogo);
 5. confere os pré-requisitos externos e diz o que falta e quem resolve: credenciais, landing (external location),
    tabelas destino (existem, Delta, MODIFY para os jobs) e conexão com o Netezza.
-Só ADICIONA permissões; nunca remove. Termina com erro apenas se uma etapa obrigatória (1-3) falhar.
+Só ADICIONA grants no banco e BROWSE; nunca remove. Termina com erro apenas se uma etapa obrigatória (1-3) falhar.
 """
 import argparse
 import base64
@@ -21,7 +21,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(inspect.currentframe().f_code
 
 from databricks.sdk import WorkspaceClient  # noqa: E402
 from databricks.sdk.service.catalog import PermissionsChange, Privilege  # noqa: E402
-from databricks.sdk.service.workspace import AclPermission  # noqa: E402
 
 from nzexport import migrate, repo  # noqa: E402
 from nzexport.db import Database, LakebaseConfig  # noqa: E402
@@ -88,17 +87,20 @@ def main():
         rel.add(ERRO, "banco do app (Lakebase)", e, "deploy do bundle / permissão no projeto Lakebase")
 
     # 3. secret scope -----------------------------------------------------------------------------------------
+    # O app e os jobs só LEEM o scope, que já existe no ambiente; o pós-deploy não concede nem altera ACLs.
     try:
-        acls = {x.principal: x.permission for x in w.secrets.list_acls(scope=a.secret_scope)}
-        ordem = {AclPermission.READ: 1, AclPermission.WRITE: 2, AclPermission.MANAGE: 3}
-        alvo = ([(app_sp, AclPermission.WRITE)] if app_sp else []) + [(eu["principal"], AclPermission.READ)]
-        for principal, nivel in alvo:
-            if ordem.get(acls.get(principal), 0) >= ordem[nivel]:
-                continue  # já tem igual ou maior: nunca rebaixa
-            w.secrets.put_acl(scope=a.secret_scope, principal=principal, permission=nivel)
-        rel.add(OK, "secret scope", f"{a.secret_scope}: app com WRITE, jobs com READ (ACLs só adicionadas)")
+        w.secrets.list_secrets(scope=a.secret_scope)
+        rel.add(OK, "secret scope", f"{a.secret_scope}: jobs ({eu['principal']}) com leitura")
     except Exception as e:  # noqa: BLE001
-        rel.add(ERRO, "secret scope", f"{a.secret_scope}: {e}", "deploy do bundle (recurso secret_scopes)")
+        rel.add(ERRO, "secret scope", f"{a.secret_scope}: sem leitura para {eu['principal']} ({str(e)[:200]})",
+                f"administrador do scope: databricks secrets put-acl {a.secret_scope} {eu['principal']} READ")
+    if app_sp:
+        try:
+            acl = w.secrets.get_acl(scope=a.secret_scope, principal=app_sp).permission
+            rel.add(OK, "leitura do app no secret scope", f"{a.secret_scope}: app com {acl.value}")
+        except Exception:  # noqa: BLE001 - sem ACL para o app, ou quem roda não pode consultar ACLs
+            rel.add(AVISO, "leitura do app no secret scope", f"não foi possível confirmar READ do app em {a.secret_scope}",
+                    f"administrador do scope: databricks secrets put-acl {a.secret_scope} {app_sp} READ")
 
     # 4. BROWSE nos catálogos de destino ----------------------------------------------------------------------
     for cat in [c.strip() for c in a.dest_catalogs.split(",") if c.strip() and not c.strip().startswith("<")]:
@@ -146,7 +148,7 @@ def conferir_externos(w, db, rel, eu, scope):
             rel.add(OK, f"credenciais {sid}", "usuário e senha presentes no secret scope")
         else:
             rel.add(AVISO, f"credenciais {sid}", "usuário/senha do Netezza não definidos",
-                    "app (Conexão Netezza) ou CI/CD: databricks secrets put-secret")
+                    f"CI/CD ou administrador: databricks secrets put-secret {scope} {sid}-user (e {sid}-password)")
         # landing
         if not src.get("landing_root"):
             rel.add(AVISO, f"landing {sid}", "caminho da landing não configurado", "app (Conexão Netezza)")

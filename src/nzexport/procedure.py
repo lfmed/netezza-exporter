@@ -263,8 +263,8 @@ def build_client(source: dict, secrets_reader=None):
             user = secrets_reader(scope, f"{sid}-user")
             password = secrets_reader(scope, f"{sid}-password")
         except Exception:  # noqa: BLE001
-            raise ConnectError("credenciais da conexão não encontradas no secret scope; "
-                               "configure usuário e senha em Administração → Conexão") from None
+            raise ConnectError(f"credenciais da conexão não encontradas no secret scope {scope} "
+                               f"(chaves {sid}-user e {sid}-password)") from None
         if not source.get("database"):
             raise ConnectError("conexão sem banco da sessão configurado (Administração → Conexão)")
         params = {"host": host, "port": int(port), "database": source["database"],
