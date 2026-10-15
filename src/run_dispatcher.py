@@ -25,6 +25,7 @@ def main():
     p.add_argument("--max-runtime-min", type=int, default=720)
     p.add_argument("--grant-role", default="", help="roles (vírgula) que recebem acesso ao schema")
     p.add_argument("--importer-job-id", default="")
+    p.add_argument("--secret-scope", required=True, help="secret scope do Netezza (variável secret_scope do bundle)")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     version_file = os.path.join(os.path.dirname(os.path.abspath(inspect.currentframe().f_code.co_filename)), "VERSION")
@@ -37,7 +38,8 @@ def main():
     try:
         Dispatcher(db, run_id=a.run_id, w=w, job_id=a.job_id, idle_exit_s=a.idle_exit_s,
                    max_runtime_s=a.max_runtime_min * 60,
-                   importer_job_id=int(a.importer_job_id) if a.importer_job_id else None).run()
+                   importer_job_id=int(a.importer_job_id) if a.importer_job_id else None,
+                   secret_scope=a.secret_scope).run()
     finally:
         db.close()
 

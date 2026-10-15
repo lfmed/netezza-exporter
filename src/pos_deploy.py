@@ -179,7 +179,7 @@ def conferir_externos(w, db, rel, eu, scope):
         # conexão Netezza (só se configurada)
         if {f"{sid}-host", f"{sid}-user", f"{sid}-password"} <= keys:
             try:
-                client = build_client(src, secrets_reader=lambda s, k: base64.b64decode(
+                client = build_client(src, scope, secrets_reader=lambda s, k: base64.b64decode(
                     w.secrets.get_secret(scope=s, key=k).value).decode())
                 res = client.test(repo.procedure_checks(db, sid))
                 ok = all(r["ok"] for r in res)

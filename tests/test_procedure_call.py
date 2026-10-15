@@ -61,11 +61,18 @@ def test_build_client_le_host_e_porta_do_secret_scope():
     def ler(scope, key):
         return segredos[key]
 
-    src = {"source_id": "netezza", "secret_scope": "nzexport-netezza", "database": "SYSTEM"}
-    c = build_client(src, secrets_reader=ler)
+    src = {"source_id": "netezza", "database": "SYSTEM"}
+    c = build_client(src, "nzexport-netezza", secrets_reader=ler)
     assert (c.conn_params["host"], c.conn_params["port"]) == ("nz.sicoob.local", 5480)
     segredos["netezza-port"] = "5481"
-    assert build_client(src, secrets_reader=ler).conn_params["port"] == 5481
+    assert build_client(src, "nzexport-netezza", secrets_reader=ler).conn_params["port"] == 5481
     del segredos["netezza-host"]
     with pytest.raises(ConnectError, match="netezza-host"):
-        build_client(src, secrets_reader=ler)
+        build_client(src, "nzexport-netezza", secrets_reader=ler)
+
+
+def test_build_client_exige_o_scope_informado_no_deploy():
+    from nzexport.procedure import ConnectError, build_client
+
+    with pytest.raises(ConnectError, match="variável secret_scope"):
+        build_client({"source_id": "netezza", "database": "SYSTEM"}, None, secrets_reader=lambda s, k: "x")

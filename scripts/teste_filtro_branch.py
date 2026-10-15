@@ -51,23 +51,28 @@ def fase_migracao(w):
     with cfg.connect() as c:
         tem_antiga = c.execute("""SELECT 1 FROM information_schema.columns WHERE table_schema = 'nzexport'
                                   AND table_name = 'export_subblock' AND column_name = 'data_range'""").fetchone()
-        check(bool(tem_antiga), "branch começa no modelo antigo (data_range)")
-        c.execute("""INSERT INTO table_config (table_config_id, source_id) VALUES ('LEGADO', 'netezza')""")
-        c.execute("""INSERT INTO table_config_version (table_config_id, config_version, source_table, procedure_name,
-                     call_profile, time_column, migration_start, migration_end)
-                     VALUES ('LEGADO', 1, 'LEGADO', 'SP_CARGA_EVENTUAL', 'SP_CARGA_EVENTUAL', 'SK_DATA',
-                             '2016-01-01', '2016-03-31')""")
-        rid = c.execute("""INSERT INTO export_request (request_name, requested_by, status, max_parallel)
-                           VALUES ('legado', 'teste', 'COMPLETED', 1) RETURNING request_id""").fetchone()["request_id"]
-        rt = c.execute("""INSERT INTO export_request_table (request_id, ordinal, table_config_id, config_version,
-                          period_start, period_end, subblock_unit, subblock_size)
-                          VALUES (%s, 1, 'LEGADO', 1, '2016-01-01', '2016-01-31', 'MONTH', 1)
-                          RETURNING request_table_id""", (rid,)).fetchone()["request_table_id"]
-        c.execute("""INSERT INTO export_subblock (request_table_id, request_id, table_config_id, seq, data_range, status)
-                     VALUES (%s, %s, 'LEGADO', 1, '[2016-01-01,2016-02-01)', 'DONE')""", (rt, rid))
-        c.commit()
+        if not tem_antiga:
+            print("  --   production já está no modelo novo (key_range): só confere que a migração se reaplica")
+        else:
+            c.execute("""INSERT INTO table_config (table_config_id, source_id) VALUES ('LEGADO', 'netezza')""")
+            c.execute("""INSERT INTO table_config_version (table_config_id, config_version, source_table, procedure_name,
+                         call_profile, time_column, migration_start, migration_end)
+                         VALUES ('LEGADO', 1, 'LEGADO', 'SP_CARGA_EVENTUAL', 'SP_CARGA_EVENTUAL', 'SK_DATA',
+                                 '2016-01-01', '2016-03-31')""")
+            rid = c.execute("""INSERT INTO export_request (request_name, requested_by, status, max_parallel)
+                               VALUES ('legado', 'teste', 'COMPLETED', 1) RETURNING request_id""").fetchone()["request_id"]
+            rt = c.execute("""INSERT INTO export_request_table (request_id, ordinal, table_config_id, config_version,
+                              period_start, period_end, subblock_unit, subblock_size)
+                              VALUES (%s, 1, 'LEGADO', 1, '2016-01-01', '2016-01-31', 'MONTH', 1)
+                              RETURNING request_table_id""", (rid,)).fetchone()["request_table_id"]
+            c.execute("""INSERT INTO export_subblock (request_table_id, request_id, table_config_id, seq, data_range, status)
+                         VALUES (%s, %s, 'LEGADO', 1, '[2016-01-01,2016-02-01)', 'DONE')""", (rt, rid))
+            c.commit()
     migrate.run(cfg)
     migrate.run(cfg)  # idempotente
+    if not tem_antiga:
+        check(True, "migração reaplicada sem erro")
+        return cfg
     with cfg.connect() as c:
         sb = c.execute("SELECT key_range::text AS k FROM export_subblock WHERE table_config_id = 'LEGADO'").fetchone()
         ini = (date(2016, 1, 1) - date(1970, 1, 1)).days
@@ -182,7 +187,7 @@ def fase_telas(reqs):
     db = services.db()
     sb = {k: str(repo.request_subblocks(db, v)[0]["subblock_id"]) for k, v in reqs.items()}
     pages = ["/", "/requests", "/requests/new", "/admin", "/admin/tables/new", "/admin/tables/template.csv",
-             "/admin/tables/export.csv"] + [f"/coverage/{t}" for t in ("T_DATA", "T_NUM", "T_TOTAL", "LEGADO")] + \
+             "/admin/tables/export.csv"] + [f"/coverage/{t}" for t in ("T_DATA", "T_NUM", "T_TOTAL") + (("LEGADO",) if repo.get_table(db, "LEGADO") else ())] + \
             [f"/admin/tables/{t}" for t in ("T_DATA", "T_NUM", "T_TOTAL")] + \
             [f"/requests/{r}" for r in reqs.values()] + [f"/subblocks/{s}" for s in sb.values()]
     for p in pages:
@@ -212,6 +217,15 @@ def fase_telas(reqs):
         "default_subblock_count": "8", "default_subblock_unit": "MONTH", "default_subblock_size": "1",
         "max_parallel": "2", "call_timeout_min": "60", "max_retries": "1", "retry_unknown": "0"})
     t2 = repo.get_table(db, "T_NUM2")
+    txt = cl.get("/admin/sources/netezza").get_data(as_text=True)
+    check("<code>nzexport-netezza</code>" in txt and 'name="secret_scope"' not in txt and 'name="nz_password"' not in txt,
+          "conexão mostra o nome do secret scope sem campo editável")
+    r = cl.post("/admin/sources/save", data={"source_id": "netezza", "display_name": "Netezza teste", "database": "system",
+                                              "security_level": "1", "connect_timeout_s": "30", "max_sessions": "3",
+                                              "secret_scope": "outro-scope"})
+    src = repo.get_source(db, "netezza")
+    check(r.status_code == 302 and src["max_sessions"] == 3 and "secret_scope" not in src,
+          "salvar a conexão não grava o secret scope (coluna removida, campo enviado é ignorado)")
     check(r.status_code == 302 and t2 and (t2["scope_num_min"], t2["scope_num_max"], t2["default_subblock_count"],
           t2["migration_start"]) == (-1000, 5000, 8, None), "cadastro numérico pelo formulário")
 

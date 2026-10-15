@@ -466,6 +466,7 @@ def create_app() -> Flask:
         sources = repo.list_sources(db)
         return render_template("admin.html", sources=sources, tables=repo.list_tables(db),
                                urls={s["source_id"]: services.connection_url(s) for s in sources},
+                               secret_scope=services.SECRET_SCOPE,
                                creds={s["source_id"]: services.credentials_present(s["source_id"]) for s in sources},
                                hooks=repo.list_hooks(db), last_tests=last_tests, deploy=deploy)
 
@@ -522,7 +523,7 @@ def create_app() -> Flask:
                           default_ext_schema=ident("default_ext_schema"), landing_root=landing or None, **folders,
                           max_imports=_int(f.get("max_imports"), 4, 1, 50),
                           file_wait_min=_int(f.get("file_wait_min"), 10, 0, 1440))
-            repo.save_connection(services.db(), _user(), sid, fields, secret_scope=services.SECRET_SCOPE)
+            repo.save_connection(services.db(), _user(), sid, fields)
             flash("Conexão salva.", "info")
         except (ValueError, KeyError) as e:
             flash(f"Erro: {e}", "error")

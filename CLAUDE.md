@@ -40,7 +40,7 @@ Documentos: `README.md` (operação), `DEPLOY.md` (deploy no cliente), `CHANGELO
 | Lakebase | projeto `netezza-exporter`, branch `production`, endpoint `projects/netezza-exporter/branches/production/endpoints/primary`, schema `nzexport` |
 | Backup Lakebase | branch `backup-antes-remover-simulacao` (sem expiração; apagar só se o usuário pedir) |
 | Jobs | dispatcher `65950468575247`, importer `1045038738828699`, conn_test `1073163387876744`, pos_deploy (criado pelo bundle) |
-| Secret scope | `nzexport-netezza`, chaves `<source_id>-host` / `-port` (URL exibida) e `-user` / `-password`; app com READ (conexão padrão `netezza`) |
+| Secret scope | `nzexport-netezza`, chaves `<source_id>-host` / `-port` (URL exibida) e `-user` / `-password`; app com READ (conexão padrão `netezza`). O **nome** do scope vem só da variável `secret_scope` do bundle (app: `NETEZZA_SECRET_SCOPE`; jobs: parâmetro `--secret-scope`); o app mostra e nunca grava (v1.012) |
 | Catálogo dev | `stable_classic_pg4xe1_catalog`; warehouse para testes `9981e1dca61efe86` |
 | Health | `GET /api/health` → `{"ok":true,"version":"..."}` (`/healthz` é interceptado pela plataforma) |
 
@@ -130,4 +130,5 @@ databricks bundle run nzexport_app -t dev --profile fe-vm-stable-classic-pg4xe1
 0.999 chamada da `SP_CARGA_EVENTUAL` · 1.000 tela de conexão Netezza · 1.001 remove simulação · 1.002 destino UC com
 navegador · 1.003 landing e formato do arquivo · 1.004 job importador · 1.005 deploy repetível (targets, pós-deploy,
 secret scope) · 1.006 vazão (reg/s) por subbloco, tabela e histórica · 1.007 host/porta no secret scope · 1.008 app só
-lê o scope · 1.009 política de serverless do app · 1.010 tipo de filtro (Data, Número, Sem filtro) · 1.011 `lakebase_endpoint` aceita o host.
+lê o scope · 1.009 política de serverless do app · 1.010 tipo de filtro (Data, Número, Sem filtro) · 1.011 `lakebase_endpoint` aceita o host · 1.012 nome do
+secret scope só pela configuração do deploy.

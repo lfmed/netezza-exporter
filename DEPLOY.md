@@ -33,7 +33,7 @@ Em `databricks.yml`, preencha o target (`hml` ou `prd`):
 | `svc_hash` | `a1b2c3d4-...` | application ID do SP: `run_as` dos jobs e pasta do bundle |
 | `app_name` | `netezza-exporter` | nome do app |
 | `lakebase_project` / `lakebase_endpoint` | `netezza-exporter-prd` / `projects/netezza-exporter-prd/branches/production/endpoints/primary` | banco do app |
-| `secret_scope` | `nzexport-netezza` | scope existente com host, porta e credenciais do Netezza |
+| `secret_scope` | `nzexport-netezza` | nome do scope existente com host, porta e credenciais do Netezza; informado só aqui (o app mostra o nome, sem gravar nem permitir alterar) |
 | `serverless_policy_id` | `79898ab9-...` | política de serverless (budget policy) do app; vazio = padrão do workspace |
 | `dest_catalogs` | `migracao` (vírgula para vários) | catálogos que o app navega (`BROWSE`) |
 

@@ -268,11 +268,12 @@ def _mask(msg: str, params: dict) -> str:
     return msg[:2000]
 
 
-def build_client(source: dict, secrets_reader=None):
+def build_client(source: dict, scope: str | None, secrets_reader=None):
+    """Cliente nzpy com host, porta, usuário e senha lidos do secret scope. O nome do scope vem da configuração
+    do deploy (variável secret_scope do bundle), nunca do banco do app."""
     if source.get("driver", "nzpy") == "nzpy":
-        scope = source.get("secret_scope")
         if not scope or secrets_reader is None:
-            raise ConnectError("conexão nzpy sem secret scope configurado (host, porta, usuário e senha)")
+            raise ConnectError("secret scope do Netezza não informado (variável secret_scope do bundle)")
         sid = source["source_id"]
         try:
             host = secrets_reader(scope, f"{sid}-host").strip()

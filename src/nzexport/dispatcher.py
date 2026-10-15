@@ -55,8 +55,9 @@ def _backoff_sql(attempts: int) -> str:
 class Dispatcher:
     def __init__(self, db: Database, run_id: int, w: WorkspaceClient | None = None, job_id: int | None = None,
                  idle_exit_s: int = 120, max_runtime_s: int = 12 * 3600, poll_s: float = 5.0,
-                 importer_job_id: int | None = None):
+                 importer_job_id: int | None = None, secret_scope: str | None = None):
         self.db = db
+        self.secret_scope = secret_scope   # informado no deploy (variável do bundle), nunca pelo app
         self.run_id = run_id
         self.owner = f"run-{run_id}"
         self.w = w
@@ -248,7 +249,7 @@ class Dispatcher:
         if cached and time.time() - cached[0] < 300:
             return cached[1]
         src = self.db.one("SELECT * FROM source_connection WHERE source_id = %s", (source_id,))
-        client = build_client(src, secrets_reader=self._read_secret)
+        client = build_client(src, self.secret_scope, secrets_reader=self._read_secret)
         self._clients[source_id] = (time.time(), client)
         return client
 

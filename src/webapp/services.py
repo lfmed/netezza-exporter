@@ -57,6 +57,8 @@ def ensure_dispatcher(force: bool = False) -> int | None:
         return None
 
 
+# Nome do secret scope do Netezza: informado só no deploy (variável secret_scope do bundle -> NETEZZA_SECRET_SCOPE).
+# O app só lê o scope e mostra o nome; não grava valores nem o nome em lugar nenhum.
 SECRET_SCOPE = os.environ.get("NETEZZA_SECRET_SCOPE", "nzexport-netezza")
 
 

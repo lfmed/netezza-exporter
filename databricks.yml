@@ -17,7 +17,9 @@ variables:
       ep-....database...com. Veja com databricks postgres list-endpoints projects/<projeto>/branches/production.
     default: projects/netezza-exporter/branches/production/endpoints/primary
   secret_scope:
-    description: Secret scope já existente no ambiente com host, porta, usuário e senha do Netezza (app e jobs só leem). Nunca coloque o valor aqui.
+    description: >-
+      Nome do secret scope já existente no ambiente com host, porta, usuário e senha do Netezza. É informado só aqui:
+      o app e os jobs leem o scope e o app mostra o nome, sem gravar nem permitir alterar. Nunca coloque valores aqui.
     default: nzexport-netezza
   dest_catalogs:
     description: Catálogos de destino (vírgula) em que o app recebe BROWSE para o navegador do catálogo
@@ -68,6 +70,8 @@ resources:
           default: "120"
         - name: max_runtime_min
           default: "720"
+        - name: secret_scope
+          default: ${var.secret_scope}
       tasks:
         - task_key: dispatcher
           environment_key: default
@@ -86,6 +90,8 @@ resources:
               - "{{job.parameters.max_runtime_min}}"
               - --importer-job-id
               - "${resources.jobs.nzexport_importer.id}"
+              - --secret-scope
+              - "{{job.parameters.secret_scope}}"
           timeout_seconds: 0
       environments:
         - environment_key: default
@@ -138,13 +144,16 @@ resources:
           default: ""
         - name: test_id
           default: ""
+        - name: secret_scope
+          default: ${var.secret_scope}
       tasks:
         - task_key: test
           environment_key: default
           spark_python_task:
             python_file: ./src/run_conn_test.py
             parameters: ["--endpoint", "{{job.parameters.lakebase_endpoint}}", "--source-id", "{{job.parameters.source_id}}",
-                         "--test-id", "{{job.parameters.test_id}}", "--run-id", "{{job.run_id}}"]
+                         "--test-id", "{{job.parameters.test_id}}", "--run-id", "{{job.run_id}}",
+                         "--secret-scope", "{{job.parameters.secret_scope}}"]
           timeout_seconds: 600
       environments:
         - environment_key: default

@@ -8,7 +8,6 @@ CREATE TABLE IF NOT EXISTS source_connection (
   source_id        text PRIMARY KEY,
   display_name     text NOT NULL,
   driver           text NOT NULL DEFAULT 'nzpy',
-  secret_scope     text,               -- chaves <source_id>-host, -port, -user, -password
   max_sessions     int  NOT NULL DEFAULT 4 CHECK (max_sessions BETWEEN 1 AND 200),
   connect_timeout_s int NOT NULL DEFAULT 30,
   updated_at       timestamptz NOT NULL DEFAULT now(),
@@ -25,6 +24,8 @@ DO $$ BEGIN
   END IF;
 END $$;
 ALTER TABLE source_connection DROP COLUMN IF EXISTS driver_options;
+-- O nome do secret scope é informado no deploy (variável secret_scope do bundle) e nunca gravado pelo app (v1.012)
+ALTER TABLE source_connection DROP COLUMN IF EXISTS secret_scope;
 
 -- Parâmetros da conexão Netezza (host, porta, usuário e senha ficam no secret scope, nunca no banco)
 ALTER TABLE source_connection DROP COLUMN IF EXISTS host;

@@ -3,6 +3,9 @@
 Versão em `src/VERSION`, exibida no cabeçalho do app e no log do dispatcher. Cada ajuste soma 0.001
 (`scripts/bump_version.py`) e recebe a tag git `v<versão>`.
 
+## 1.012 — 2026-10-15
+- Nome do secret scope do Netezza só pela configuração do deploy (variável secret_scope do bundle): o app recebe em NETEZZA_SECRET_SCOPE e o dispatcher e o teste de conexão no parâmetro --secret-scope; o app mostra o nome na conexão e na Administração, sem campo e sem gravar (coluna source_connection.secret_scope removida).
+
 ## 1.011 — 2026-10-15
 - lakebase_endpoint aceita também o host do Postgres (ep-....database...com, com /banco ou URL postgresql://) e encontra o endpoint pelo host; o pós-deploy não quebra mais com NotFound 'GET /postgres/ep-...': mostra o caminho certo (projects/<projeto>/branches/production/endpoints/primary) como aviso ou erro claro; descrição da variável e DEPLOY.md explicam o formato.
 

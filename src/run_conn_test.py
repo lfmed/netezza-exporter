@@ -22,6 +22,7 @@ def main():
     p.add_argument("--source-id", required=True)
     p.add_argument("--test-id", required=True)
     p.add_argument("--run-id", type=int)
+    p.add_argument("--secret-scope", required=True, help="secret scope do Netezza (variável secret_scope do bundle)")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -31,7 +32,7 @@ def main():
         repo.update_connection_test(db, a.test_id, "RUNNING", job_run_id=a.run_id)
         source = repo.get_source(db, a.source_id)
         try:
-            client = build_client(source, secrets_reader=lambda scope, key: base64.b64decode(
+            client = build_client(source, a.secret_scope, secrets_reader=lambda scope, key: base64.b64decode(
                 w.secrets.get_secret(scope=scope, key=key).value).decode())
             results = client.test(repo.procedure_checks(db, a.source_id))
         except ConnectError as e:

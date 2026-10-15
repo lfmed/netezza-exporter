@@ -49,17 +49,17 @@ def get_source(db: Database, source_id: str):
     return db.one("SELECT * FROM source_connection WHERE source_id = %s", (source_id,))
 
 
-def save_connection(db: Database, actor: str, source_id: str, fields: dict, secret_scope: str | None = None):
-    """Grava os parâmetros da conexão (host, porta, usuário e senha ficam no secret scope)."""
+def save_connection(db: Database, actor: str, source_id: str, fields: dict):
+    """Grava os parâmetros da conexão. Host, porta, usuário e senha ficam no secret scope, cujo nome é informado
+    no deploy e nunca é gravado pelo app."""
     vals = [fields.get(f) for f in CONNECTION_FIELDS]
     with db.tx() as conn:
         conn.execute(f"""
-            INSERT INTO source_connection (source_id, {', '.join(CONNECTION_FIELDS)}, secret_scope, updated_by)
-            VALUES (%s, {', '.join(['%s'] * len(CONNECTION_FIELDS))}, %s, %s)
+            INSERT INTO source_connection (source_id, {', '.join(CONNECTION_FIELDS)}, updated_by)
+            VALUES (%s, {', '.join(['%s'] * len(CONNECTION_FIELDS))}, %s)
             ON CONFLICT (source_id) DO UPDATE SET {', '.join(f'{f} = EXCLUDED.{f}' for f in CONNECTION_FIELDS)},
-              secret_scope = coalesce(EXCLUDED.secret_scope, source_connection.secret_scope),
               updated_by = EXCLUDED.updated_by, updated_at = now()""",
-            (source_id, *vals, secret_scope, actor))
+            (source_id, *vals, actor))
         log_event(conn, None, "CONNECTION_SAVED", actor,
                   {"source_id": source_id, "driver": fields.get("driver"),
                    "database": fields.get("database"), "max_sessions": fields.get("max_sessions")})

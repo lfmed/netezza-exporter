@@ -35,6 +35,9 @@
   <div class="card">
     <h2>Secret scope</h2>
     {% set sid = s.source_id if s else '&lt;identificador&gt;' %}
+    <dl class="kv" style="margin-top:0">
+      <dt>Nome</dt><dd><code>{{ secret_scope }}</code> <small class="muted">· informado no deploy (variável <code>secret_scope</code> do bundle); não é editável no app</small></dd>
+    </dl>
     {% if s %}
     <p style="margin-top:0">
       {% if creds.error %}<span class="badge s-unknown">sem acesso de leitura ao secret scope</span>
@@ -47,8 +50,8 @@
       {% endif %}
     </p>
     {% endif %}
-    <p class="hint">Host, porta, usuário e senha do Netezza ficam no secret scope <code>{{ secret_scope }}</code>, que já existe no ambiente.
-      O app só <b>lê</b> o scope: não grava nem exibe as credenciais. Quem administra o scope grava as chaves
+    <p class="hint">Host, porta, usuário e senha do Netezza ficam nesse secret scope, que já existe no ambiente.
+      O app só <b>lê</b> o scope: não grava o nome nem os valores e não exibe as credenciais. Quem administra o scope grava as chaves
       <code>{{ sid|safe }}-host</code>, <code>{{ sid|safe }}-port</code> (opcional), <code>{{ sid|safe }}-user</code> e <code>{{ sid|safe }}-password</code>.</p>
   </div>
 </div>
